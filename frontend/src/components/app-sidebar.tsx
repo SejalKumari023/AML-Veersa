@@ -100,6 +100,10 @@ const getMenuItemsForUserType = (userType: UserType) => {
                         title: "Alerts",
                         url: "/compliance/alerts",
                     },
+                    {
+                        title: "Documents",
+                        url: "/compliance/documents",
+                    },
                 ],
             },
             ...baseItems,

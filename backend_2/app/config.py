@@ -3,7 +3,7 @@ from typing import Dict, Any
 
 # Server configuration
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8000))
+PORT = int(os.getenv("PORT", 5002))
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # CORS configuration
@@ -34,5 +34,7 @@ ALLOWED_IMAGE_TYPES = [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
 UPLOAD_DIRECTORY = "uploads/"
 
 # Google Cloud Vision API configuration
-GOOGLE_CLOUD_VISION_ENABLED = os.getenv("GOOGLE_CLOUD_VISION_ENABLED", "True").lower() == "true"
+GOOGLE_CLOUD_VISION_ENABLED = (
+    os.getenv("GOOGLE_CLOUD_VISION_ENABLED", "True").lower() == "true"
+)
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")

@@ -15,10 +15,25 @@ class InMemoryCollection:
 
     async def find(self, query: Dict[str, Any] = None):
         """Find documents matching query"""
+
         class AsyncCursor:
             def __init__(self, data):
                 self.data = list(data.values())
                 self.index = 0
+                self._sort_field = None
+                self._sort_direction = 1
+
+            def sort(self, field: str, direction: int = 1):
+                """Sort the cursor results"""
+                self._sort_field = field
+                self._sort_direction = direction
+                # Sort the data
+                if self._sort_field:
+                    self.data.sort(
+                        key=lambda x: x.get(self._sort_field, ""),
+                        reverse=(self._sort_direction == -1),
+                    )
+                return self
 
             def __aiter__(self):
                 return self
@@ -37,18 +52,18 @@ class InMemoryCollection:
         if "_id" in query:
             obj_id = query["_id"]
             return self._data.get(str(obj_id))
-        
+
         # Support query by other fields
         for doc in self._data.values():
             if all(doc.get(k) == v for k, v in query.items()):
                 return doc
-        
+
         return None
 
     async def insert_one(self, document: Dict[str, Any]):
         """Insert a document"""
         document_copy = document.copy()
-        
+
         # Use existing _id if provided, otherwise generate one
         if "_id" not in document_copy:
             self._counter += 1
@@ -56,7 +71,7 @@ class InMemoryCollection:
             document_copy["_id"] = doc_id
         else:
             doc_id = document_copy["_id"]
-        
+
         class InsertResult:
             def __init__(self, inserted_id):
                 self.inserted_id = inserted_id
@@ -79,20 +94,20 @@ class InMemoryCollection:
                         self.modified_count = modified
 
                 return UpdateResult(1, 1)
-        
+
         # Support query by other fields (upsert behavior)
         for obj_id, doc in list(self._data.items()):
             if all(doc.get(k) == v for k, v in query.items() if k != "_id"):
                 if "$set" in update:
                     self._data[obj_id].update(update["$set"])
-                
+
                 class UpdateResult:
                     def __init__(self, matched, modified):
                         self.matched_count = matched
                         self.modified_count = modified
-                
+
                 return UpdateResult(1, 1)
-        
+
         # Upsert: create new document if not found
         if "$set" in update:
             new_doc = query.copy()
@@ -102,12 +117,12 @@ class InMemoryCollection:
                 self._counter += 1
                 new_doc["_id"] = f"obj_{self._counter}"
             self._data[str(new_doc["_id"])] = new_doc
-            
+
             class UpdateResult:
                 def __init__(self, matched, modified):
                     self.matched_count = matched
                     self.modified_count = modified
-            
+
             return UpdateResult(1, 1)
 
         class UpdateResult:
@@ -129,14 +144,16 @@ class InMemoryCollection:
                         self.deleted_count = deleted
 
                 return DeleteResult(1)
-        
+
         # Also support query by other fields (e.g., image_id)
         for obj_id, doc in list(self._data.items()):
             if any(doc.get(k) == v for k, v in query.items() if k != "_id"):
                 del self._data[obj_id]
+
                 class DeleteResult:
                     def __init__(self, deleted):
                         self.deleted_count = deleted
+
                 return DeleteResult(1)
 
         class DeleteResult:
@@ -144,12 +161,12 @@ class InMemoryCollection:
                 self.deleted_count = deleted
 
         return DeleteResult(0)
-    
+
     async def count_documents(self, query: Dict[str, Any] = None):
         """Count documents matching query"""
         if query is None or len(query) == 0:
             return len(self._data)
-        
+
         count = 0
         for doc in self._data.values():
             if all(doc.get(k) == v for k, v in query.items()):
@@ -172,6 +189,7 @@ class InMemoryDatabase:
 
 class Database:
     """Database singleton for in-memory storage"""
+
     database: InMemoryDatabase = None
 
     @classmethod
