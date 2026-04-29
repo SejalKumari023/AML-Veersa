@@ -1,29 +1,27 @@
 FROM python:3.11-slim
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency definition files first to leverage Docker cache.
+# This copies the most common files. Adjust this line if you use different file names.
+COPY pyproject.toml* requirements.lock* requirements.txt* uv.lock* ./
 
+# Install dependencies
+# `uv sync --locked` will use pyproject.toml or requirements.lock
+# This command will fail if the files copied above don't exist,
+# so ensure your backend_1 directory contains them.
+RUN uv sync --locked
+
+# Copy the rest of the application source code
 COPY . .
 
+# Expose the port defined in your docker-compose.yml
 EXPOSE 5001
 
-# Use the app.py entry point which correctly uses the factory pattern
-CMD ["python", "app.py"] 
+# Run the application
+# This assumes your entry point is app.py
+CMD ["uv", "run", "app.py"]
 
-# Use the official PostgreSQL image as the base
-FROM postgres:latest
-
-# Set environment variables for the PostgreSQL superuser password
-# It is recommended to use Docker secrets or environment variables managed by orchestrators
-# for production environments instead of hardcoding passwords in the Dockerfile.
-ENV POSTGRES_PASSWORD=mysecretpassword
-
-# Copy SQL initialization scripts into the entrypoint directory
-# These scripts will be executed automatically when the container starts for the first time.
-# The directory /docker-entrypoint-initdb.d is a special location recognized by the official Postgres image.
-COPY init-scripts/ /docker-entrypoint-initdb.d/
-
-# Expose the default PostgreSQL port (optional, but good practice for clarity)
-EXPOSE 5432

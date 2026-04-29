@@ -15,8 +15,8 @@ if __name__ == "__main__":
     uvicorn.run(
         "app:create_app",
         factory=True,
+        reload=True,
         host=HOST,
         port=PORT,
-        reload=DEBUG,
-        log_level="info" if not DEBUG else "debug"
+        log_level="info" if not DEBUG else "debug",
     )
