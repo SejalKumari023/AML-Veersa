@@ -360,7 +360,7 @@ export default function ComplianceTransactionsPage() {
                                     Transactions ({transactions.length})
                                 </h2>
                                 <div className="flex gap-4">
-                                    <div className="flex flex-col gap-3 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
+                                    <div className="flex flex-col gap-3 overflow-y-auto pr-2">
                                         {transactions.map((transaction) => (
                                             <Card
                                                 key={transaction.id}

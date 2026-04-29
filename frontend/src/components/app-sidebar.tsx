@@ -99,7 +99,7 @@ const getMenuItemsForUserType = (userType: UserType) => {
                     },
                     {
                         title: "Alerts",
-                        url: "#",
+                        url: "/compliance/alerts",
                     },
                 ],
             },
