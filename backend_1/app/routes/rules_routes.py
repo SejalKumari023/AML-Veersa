@@ -16,6 +16,9 @@ rule_router = APIRouter()
 
 class RuleInput(BaseModel):
     rule: str
+    rule_id: Optional[str] = (
+        None  # Optional regulatory identifier like "MAS-Notice-626"
+    )
 
 
 @rule_router.post("/")
@@ -30,14 +33,24 @@ async def post_rule(rule_input: RuleInput):
 
         # Save to PostgreSQL if all tests passed
         if result.get("all_tests_passed"):
-            rule_id = await PostgresDatabase.insert_rule(
+            # Generate rule_id if not provided (use timestamp-based ID)
+            if rule_input.rule_id:
+                rule_id = rule_input.rule_id
+            else:
+                # Generate a simple timestamp-based ID
+                from time import time
+
+                rule_id = f"RULE-{int(time() * 1000)}"
+
+            saved_rule_id = await PostgresDatabase.insert_rule(
+                rule_id=rule_id,
                 rule_text=result["rule_text"],
                 function_code=result["function_code"],
                 explanation=result.get("explanation"),
                 attributes_used=result.get("attributes_used", []),
             )
-            logger.info(f"Rule saved to database with ID: {rule_id}")
-            result["rule_id"] = rule_id
+            logger.info(f"Rule saved to database with ID: {saved_rule_id}")
+            result["rule_id"] = saved_rule_id
         else:
             logger.warning("Rule did not pass all tests, not saving to database")
 
@@ -59,8 +72,8 @@ async def get_all_rules():
 
 
 @rule_router.get("/{rule_id}")
-async def get_rule(rule_id: int):
-    """Get a specific rule by ID"""
+async def get_rule(rule_id: str):
+    """Get a specific rule by ID (supports regulatory identifiers like MAS-Notice-626)"""
     try:
         rule = await PostgresDatabase.get_rule(rule_id)
         if rule is None:

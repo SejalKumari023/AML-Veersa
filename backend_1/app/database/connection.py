@@ -183,7 +183,7 @@ class PostgresDatabase:
             await conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS rules (
-                    id SERIAL PRIMARY KEY,
+                    id TEXT PRIMARY KEY,
                     rule_text TEXT NOT NULL,
                     function_code TEXT NOT NULL,
                     explanation TEXT,
@@ -214,29 +214,36 @@ class PostgresDatabase:
     @classmethod
     async def insert_rule(
         cls,
+        rule_id: str,
         rule_text: str,
         function_code: str,
         explanation: Optional[str] = None,
         attributes_used: Optional[List[str]] = None,
-    ) -> int:
+    ) -> str:
         """Insert a new rule into the database"""
         if cls.pool is None:
             raise RuntimeError("Database pool not initialized")
 
         async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
+            await conn.execute(
                 """
-                INSERT INTO rules (rule_text, function_code, explanation, attributes_used)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id
+                INSERT INTO rules (id, rule_text, function_code, explanation, attributes_used)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (id) DO UPDATE SET
+                    rule_text = EXCLUDED.rule_text,
+                    function_code = EXCLUDED.function_code,
+                    explanation = EXCLUDED.explanation,
+                    attributes_used = EXCLUDED.attributes_used,
+                    updated_at = CURRENT_TIMESTAMP
                 """,
+                rule_id,
                 rule_text,
                 function_code,
                 explanation,
                 attributes_used or [],
             )
-            logger.info(f"Rule inserted with id: {row['id']}")
-            return row["id"]
+            logger.info(f"Rule inserted/updated with id: {rule_id}")
+            return rule_id
 
     @classmethod
     async def get_rule(cls, rule_id: str) -> Optional[Dict[str, Any]]:
