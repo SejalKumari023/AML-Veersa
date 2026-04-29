@@ -410,6 +410,8 @@ def convert_text_to_markdown_with_groq(text: str) -> str:
         prompt = f"""Convert the following document text into well-formatted Markdown. 
 Analyze the structure and format it with appropriate headings, paragraphs, lists, and sections.
 
+IMPORTANT: Do NOT correct any mistakes, typos, or errors in the text. Keep all text exactly as it appears. Only format it as Markdown - do not change, fix, or improve the content itself.
+
 Text:
 {text}
 
@@ -419,6 +421,7 @@ Please format it as proper Markdown with:
 - Lists formatted correctly (bullet points, numbered lists)
 - Preserve any tables if present
 - Maintain document structure and hierarchy
+- Preserve all original text exactly as written (including any errors or typos)
 
 Return ONLY the formatted Markdown content, no additional explanation."""
         
@@ -439,7 +442,7 @@ Return ONLY the formatted Markdown content, no additional explanation."""
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a document formatting assistant. Convert text to well-structured Markdown."
+                            "content": "You are a document formatting assistant. Convert text to well-structured Markdown. Do NOT correct mistakes, typos, or errors - only format the text. Keep all original text exactly as it appears."
                         },
                         {
                             "role": "user",
