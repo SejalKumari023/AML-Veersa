@@ -284,6 +284,45 @@ class PostgresDatabase:
             )
             logger.info("Alerts table created/verified")
 
+            # Create customers table
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS customers (
+                    id TEXT PRIMARY KEY,
+                    customer_id TEXT UNIQUE NOT NULL,
+                    customer_type TEXT NOT NULL,
+                    customer_risk_rating TEXT NOT NULL,
+                    customer_is_pep BOOLEAN NOT NULL,
+                    kyc_last_completed DATE,
+                    kyc_due_date DATE,
+                    edd_required BOOLEAN DEFAULT FALSE,
+                    edd_performed BOOLEAN DEFAULT FALSE,
+                    sow_documented BOOLEAN DEFAULT FALSE,
+                    client_risk_profile TEXT DEFAULT 'Balanced',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            logger.info("Customers table created/verified")
+
+            # Create accounts table
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id TEXT PRIMARY KEY,
+                    account_number TEXT UNIQUE NOT NULL,
+                    customer_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    country TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+                )
+                """
+            )
+            logger.info("Accounts table created/verified")
+
     @classmethod
     async def close(cls):
         """Close database connection pool"""
@@ -619,3 +658,206 @@ class PostgresDatabase:
                 "active_alerts": active_alerts or 0,
                 "resolved_alerts": resolved_alerts or 0,
             }
+
+    # Customer methods
+    @classmethod
+    async def insert_customer(cls, customer_data: Dict[str, Any]) -> str:
+        """Insert a new customer into the database"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            import uuid
+
+            customer_id = customer_data.get("id") or str(uuid.uuid4())
+            columns = list(customer_data.keys())
+            if "id" not in columns:
+                columns.insert(0, "id")
+                customer_data["id"] = customer_id
+
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [customer_data[col] for col in columns]
+
+            query = f"""
+                INSERT INTO customers ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT (customer_id) DO UPDATE SET
+                    {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col not in ['id', 'customer_id']])},
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id
+            """
+
+            row = await conn.fetchrow(query, *values)
+            logger.info(f"Customer inserted/updated: {row['id']}")
+            return row["id"]
+
+    @classmethod
+    async def get_customer(cls, customer_id: str) -> Optional[Dict[str, Any]]:
+        """Get a customer by customer_id"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM customers WHERE customer_id = $1",
+                customer_id,
+            )
+            if row:
+                return dict(row)
+            return None
+
+    @classmethod
+    async def get_customer_by_id(cls, id: str) -> Optional[Dict[str, Any]]:
+        """Get a customer by internal id"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM customers WHERE id = $1",
+                id,
+            )
+            if row:
+                return dict(row)
+            return None
+
+    @classmethod
+    async def get_all_customers(
+        cls, limit: int = 1000, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get all customers with pagination"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM customers
+                ORDER BY created_at DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+            return [dict(row) for row in rows]
+
+    @classmethod
+    async def delete_customer(cls, customer_id: str) -> bool:
+        """Delete a customer by customer_id"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM customers WHERE customer_id = $1",
+                customer_id,
+            )
+            return result == "DELETE 1"
+
+    # Account methods
+    @classmethod
+    async def insert_account(cls, account_data: Dict[str, Any]) -> str:
+        """Insert a new account into the database"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            import uuid
+
+            account_id = account_data.get("id") or str(uuid.uuid4())
+            columns = list(account_data.keys())
+            if "id" not in columns:
+                columns.insert(0, "id")
+                account_data["id"] = account_id
+
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [account_data[col] for col in columns]
+
+            query = f"""
+                INSERT INTO accounts ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT (account_number) DO UPDATE SET
+                    {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col not in ['id', 'account_number']])},
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING id
+            """
+
+            row = await conn.fetchrow(query, *values)
+            logger.info(f"Account inserted/updated: {row['id']}")
+            return row["id"]
+
+    @classmethod
+    async def get_account(cls, account_number: str) -> Optional[Dict[str, Any]]:
+        """Get an account by account_number"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM accounts WHERE account_number = $1",
+                account_number,
+            )
+            if row:
+                return dict(row)
+            return None
+
+    @classmethod
+    async def get_account_by_id(cls, id: str) -> Optional[Dict[str, Any]]:
+        """Get an account by internal id"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM accounts WHERE id = $1",
+                id,
+            )
+            if row:
+                return dict(row)
+            return None
+
+    @classmethod
+    async def get_accounts_by_customer(cls, customer_id: str) -> List[Dict[str, Any]]:
+        """Get all accounts for a customer"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM accounts WHERE customer_id = $1 ORDER BY created_at DESC",
+                customer_id,
+            )
+            return [dict(row) for row in rows]
+
+    @classmethod
+    async def get_all_accounts(
+        cls, limit: int = 1000, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get all accounts with pagination"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM accounts
+                ORDER BY created_at DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+            return [dict(row) for row in rows]
+
+    @classmethod
+    async def delete_account(cls, account_number: str) -> bool:
+        """Delete an account by account_number"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM accounts WHERE account_number = $1",
+                account_number,
+            )
+            return result == "DELETE 1"
