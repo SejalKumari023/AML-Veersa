@@ -1,0 +1,52 @@
+services:
+    nginx:
+        build: ./nginx
+        ports:
+            - "80:80"
+        depends_on:
+            - frontend
+            - backend_1
+            - backend_2
+        restart: always
+
+    backend_1:
+        build: ./backend_1
+        expose:
+            - "5001"
+        environment:
+            - PORT=5001
+            - HOST=0.0.0.0
+            - DEBUG=false
+        restart: always
+
+    backend_2:
+        build: ./backend_2
+        expose:
+            - "5002"
+        environment:
+            - PORT=5002
+            - HOST=0.0.0.0
+            - DEBUG=false
+            - PYTHONUNBUFFERED=1
+            - GROQ_API_KEY=${GROQ_API_KEY} # From .env file
+        restart: always
+
+    frontend:
+        build: ./frontend
+        expose:
+            - "3000"
+        environment:
+            - WATCHPACK_POLLING=true
+            - WDS_SOCKET_PORT=0
+            - NEXT_PUBLIC_API_URL=/api
+            - NEXT_PUBLIC_LLM_API_URL=/llm-api
+        volumes:
+            - ./frontend:/app
+            - /app/node_modules
+            - /app/.next
+        depends_on:
+            - backend_1
+            - backend_2
+        restart: always
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
