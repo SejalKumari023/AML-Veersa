@@ -107,6 +107,8 @@ export default function CompliancePage() {
 
     const [selectedNotice, setSelectedNotice] = useState<RuleNotice | null>(null)
     const [showCreateModal, setShowCreateModal] = useState(false)
+    const [isSubmitting, setIsSubmitting] = useState(false)
+    const [error, setError] = useState<string | null>(null)
 
     const getPriorityColor = (priority: RuleNotice["priority"]) => {
         switch (priority) {
@@ -126,9 +128,71 @@ export default function CompliancePage() {
     const highPriorityNoRule = notices.filter((n) => !n.hasRule && n.priority === "high").length
 
     const handleCreateRule = (noticeId: string) => {
-        // In a real app, this would navigate to a rule creation form
-        console.log("Create rule for notice:", noticeId)
+        setError(null)
         setShowCreateModal(true)
+    }
+
+    const handleSubmitRule = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault()
+
+        if (!selectedNotice) return
+
+        setIsSubmitting(true)
+        setError(null)
+
+        try {
+            const formData = new FormData(e.currentTarget)
+            const ruleName = formData.get("ruleName") as string
+            const description = formData.get("description") as string
+
+            if (!ruleName || !description) {
+                setError("Rule name and description are required")
+                setIsSubmitting(false)
+                return
+            }
+
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api"
+            const response = await fetch(`${apiUrl}/rules/`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    rule: description,
+                    rule_id: `rule-${Date.now()}`,
+                }),
+            })
+
+            if (!response.ok) {
+                throw new Error(`Failed to create rule: ${response.statusText}`)
+            }
+
+            const result = await response.json()
+            console.log("Rule created successfully:", result)
+
+            // Update the notices state to mark the rule as created
+            const updatedNotices = notices.map(notice =>
+                notice.id === selectedNotice.id
+                    ? {
+                        ...notice,
+                        hasRule: true,
+                        ruleId: result.result?.rule_id || `rule-${Date.now()}`,
+                        ruleName: ruleName,
+                        createdDate: new Date().toISOString().split('T')[0]
+                    }
+                    : notice
+            )
+            setNotices(updatedNotices)
+
+            setShowCreateModal(false)
+            setSelectedNotice(null)
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "Unknown error occurred"
+            setError(errorMessage)
+            console.error("Error creating rule:", err)
+        } finally {
+            setIsSubmitting(false)
+        }
     }
 
     return (
@@ -414,36 +478,63 @@ export default function CompliancePage() {
                                 </div>
                             )}
 
-                            <div>
-                                <label className="block text-sm font-medium text-foreground">
-                                    Rule Name *
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="Enter rule name"
-                                    className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground"
-                                />
-                            </div>
+                            {error && (
+                                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                                    {error}
+                                </div>
+                            )}
 
-                            <div>
-                                <label className="block text-sm font-medium text-foreground">
-                                    Description *
-                                </label>
-                                <textarea
-                                    placeholder="Describe the rule and how it addresses the regulatory requirement"
-                                    rows={4}
-                                    className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground"
-                                />
-                            </div>
+                            <form onSubmit={handleSubmitRule} className="space-y-4">
+                                <div>
+                                    <label htmlFor="ruleName" className="block text-sm font-medium text-foreground">
+                                        Rule Name *
+                                    </label>
+                                    <input
+                                        id="ruleName"
+                                        name="ruleName"
+                                        type="text"
+                                        placeholder="Enter rule name"
+                                        required
+                                        disabled={isSubmitting}
+                                        className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground disabled:opacity-50"
+                                    />
+                                </div>
 
-                            <div className="flex gap-2 justify-end pt-4">
-                                <Button variant="outline" onClick={() => setShowCreateModal(false)}>
-                                    Cancel
-                                </Button>
-                                <Button onClick={() => setShowCreateModal(false)}>
-                                    Create Rule
-                                </Button>
-                            </div>
+                                <div>
+                                    <label htmlFor="description" className="block text-sm font-medium text-foreground">
+                                        Description *
+                                    </label>
+                                    <textarea
+                                        id="description"
+                                        name="description"
+                                        placeholder="Describe the rule and how it addresses the regulatory requirement"
+                                        rows={4}
+                                        required
+                                        disabled={isSubmitting}
+                                        className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder-muted-foreground disabled:opacity-50"
+                                    />
+                                </div>
+
+                                <div className="flex gap-2 justify-end pt-4">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => {
+                                            setShowCreateModal(false)
+                                            setError(null)
+                                        }}
+                                        disabled={isSubmitting}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        type="submit"
+                                        disabled={isSubmitting}
+                                    >
+                                        {isSubmitting ? "Creating..." : "Create Rule"}
+                                    </Button>
+                                </div>
+                            </form>
                         </CardContent>
                     </Card>
                 </div>
