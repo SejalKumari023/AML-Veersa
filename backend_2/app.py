@@ -3,7 +3,12 @@
 Main application entry point
 """
 
+from dotenv import load_dotenv
 import uvicorn
+
+# Load environment variables from .env file
+load_dotenv()
+
 from app import create_app
 from app.config import DEBUG, HOST, PORT
 

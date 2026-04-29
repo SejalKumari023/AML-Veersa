@@ -28,6 +28,12 @@ MANIFEST
 .env.*
 !.env.example
 
+# Google Cloud credentials (sensitive)
+credentials/
+*.json
+!package.json
+!package-lock.json
+
 # IDE files
 .idea/
 .vscode/
