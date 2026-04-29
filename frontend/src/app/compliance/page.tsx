@@ -1,8 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { AlertCircle, CheckCircle2, Plus, FileText, Link as LinkIcon, Eye } from "lucide-react"
+import { useState, useEffect } from "react"
+import { AlertCircle, CheckCircle2, Plus, FileText, Link as LinkIcon, Eye, User } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { getUser, getUserTypeLabel } from "~/lib/auth"
 import {
     Card,
     CardHeader,
@@ -35,6 +37,22 @@ interface Rule {
 }
 
 export default function CompliancePage() {
+    const router = useRouter()
+    const [currentUser, setCurrentUser] = useState<{ name: string; email: string; userType: string } | null>(null)
+
+    useEffect(() => {
+        const user = getUser()
+        if (!user) {
+            router.push("/auth/login")
+        } else {
+            setCurrentUser({
+                name: user.name,
+                email: user.email,
+                userType: getUserTypeLabel(user.userType)
+            })
+        }
+    }, [router])
+
     const [notices, setNotices] = useState<RuleNotice[]>([
         {
             id: "1",
@@ -208,6 +226,15 @@ export default function CompliancePage() {
                             Review legal interpretations and create compliance rules for regulatory notices
                         </p>
                     </div>
+                    {currentUser && (
+                        <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-2">
+                            <User className="size-5 text-muted-foreground" />
+                            <div className="text-right">
+                                <p className="text-sm font-medium text-foreground">{currentUser.name}</p>
+                                <p className="text-xs text-muted-foreground">{currentUser.userType}</p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
