@@ -1,5 +1,5 @@
 [project]
-name = "backend-aml"
+name = "backend-1"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -8,7 +8,9 @@ dependencies = [
     "dotenv>=0.9.9",
     "fastapi>=0.120.4",
     "langchain>=1.0.3",
+    "langchain-openai>=1.0.1",
     "langgraph>=1.0.2",
     "openai>=2.6.1",
+    "python-multipart>=0.0.20",
     "uvicorn>=0.38.0",
 ]

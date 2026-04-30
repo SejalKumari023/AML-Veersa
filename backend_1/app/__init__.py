@@ -5,6 +5,7 @@ from app.config import CORS_CONFIG, MAX_CONTENT_LENGTH
 from app.database.connection import Database
 from app.routes.data_routes import data_router
 from app.routes.user_routes import user_router
+from app.routes.rules_routes import rule_router
 from app.utils.logging_config import setup_logging
 
 logger = setup_logging()
@@ -18,7 +19,7 @@ def create_app() -> FastAPI:
         description="Real-Time AML Monitoring & Alerts API",
         version="1.0.0",
         docs_url="/docs",
-        redoc_url="/redoc"
+        redoc_url="/redoc",
     )
 
     # Configure CORS
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(user_router, prefix="/api/users", tags=["users"])
     app.include_router(data_router, prefix="/api/data", tags=["data"])
+    app.include_router(rule_router, prefix="/api/rules", tags=["rules"])
 
     @app.get("/")
     async def root():
