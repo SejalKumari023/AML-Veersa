@@ -329,7 +329,7 @@ export default function FrontOfficePage() {
                     <div className="flex flex-col gap-6">
                         {/* Clients List */}
                         <h2 className="text-lg font-semibold text-foreground">Clients ({filteredClients.length})</h2>
-                        <div className="w-96 shrink-0">
+                        <div className="shrink-0">
                             <div className="mb-4 space-y-3">
                                 <InputGroup className="p-2">
                                     <InputGroupAddon align="inline-start">
@@ -345,7 +345,7 @@ export default function FrontOfficePage() {
                             </div>
                             <div className="flex gap-4">
 
-                                <div className="flex flex-col gap-3 max-h-[calc(100vh-350px)] overflow-y-auto pr-2">
+                                <div className="flex flex-col gap-3 max-h-dvh overflow-y-auto pr-2">
                                     {filteredClients.map((client) => (
                                         <Card
                                             key={client.id}
@@ -400,7 +400,7 @@ export default function FrontOfficePage() {
                                 </div>
 
                                 {/* Client Details */}
-                                <div className="w-full">
+                                <div className="w-full max-h-dvh overflow-y-auto">
                                     {selectedClient ? (
                                         <div className="flex flex-col gap-4">
                                             {/* Client Header */}
