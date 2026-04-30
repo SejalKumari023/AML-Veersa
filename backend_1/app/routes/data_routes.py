@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.database.connection import Database, PostgresDatabase
@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 data_router = APIRouter()
 
 
+async def ingest_to_neo4j(request: Request, transaction: Transaction):
+    """Helper function to ingest transaction data into Neo4j graph database."""
+    try:
+        neo4j_db = getattr(request.app.state, "neo4j_db", None)
+        if neo4j_db:
+            await neo4j_db.ingest_transaction(transaction)
+            logger.debug(
+                f"Transaction {transaction.transaction_id} ingested into Neo4j"
+            )
+    except Exception as e:
+        logger.error(f"Failed to ingest transaction into Neo4j: {e}")
+        # Don't raise - we don't want Neo4j failures to block transaction creation
+
+
 @data_router.get("/transactions", response_model=List[Transaction])
 async def get_transactions(limit: int = 1000, offset: int = 0):
     """Get all transactions"""
@@ -31,7 +45,7 @@ async def get_transactions(limit: int = 1000, offset: int = 0):
 
 
 @data_router.post("/transactions", response_model=Transaction)
-async def create_transaction(transaction: Transaction):
+async def create_transaction(request: Request, transaction: Transaction):
     """Create a new transaction"""
     try:
         transaction_dict = transaction.dict()
@@ -97,6 +111,10 @@ async def create_transaction(transaction: Transaction):
                     )
 
         transaction_id = await PostgresDatabase.insert_transaction(transaction_dict)
+
+        # Ingest transaction into Neo4j graph database
+        await ingest_to_neo4j(request, transaction)
+
         return transaction
     except Exception as e:
         logger.error(f"Error creating transaction: {e}")
@@ -133,7 +151,7 @@ async def create_alert(alert: Alert):
 
 
 @data_router.post("/upload-transactions")
-async def upload_transactions(file: UploadFile = File(...)):
+async def upload_transactions(request: Request, file: UploadFile = File(...)):
     """Upload transaction data from CSV file"""
     try:
         if not file.filename or not file.filename.endswith(".csv"):
@@ -312,6 +330,10 @@ async def upload_transactions(file: UploadFile = File(...)):
                 # Insert validated transaction
                 transaction_dict = validated_transaction.dict()
                 await PostgresDatabase.insert_transaction(transaction_dict)
+
+                # Ingest transaction into Neo4j graph database
+                await ingest_to_neo4j(request, validated_transaction)
+
                 successful_inserts += 1
 
             except Exception as e:

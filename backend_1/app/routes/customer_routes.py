@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from app.database.connection import PostgresDatabase
@@ -148,4 +148,109 @@ async def delete_account(account_number: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@customer_router.get("/customers/graph/stats")
+async def get_graph_stats(request: Request):
+    """
+    Get basic statistics about the Neo4j graph database.
+    Useful for debugging and checking if data exists.
+    """
+    try:
+        neo4j_db = getattr(request.app.state, "neo4j_db", None)
+        if not neo4j_db:
+            raise HTTPException(
+                status_code=503, detail="Neo4j graph database not available"
+            )
+
+        # Simple query to count nodes
+        with neo4j_db._driver.session() as session:
+            result = session.run(
+                """
+                MATCH (c:Customer) 
+                WITH count(c) as customer_count
+                MATCH (a:Account)
+                WITH customer_count, count(a) as account_count
+                MATCH (t:Transaction)
+                RETURN customer_count, account_count, count(t) as transaction_count
+            """
+            )
+            record = result.single()
+
+            return {
+                "customers": record["customer_count"],
+                "accounts": record["account_count"],
+                "transactions": record["transaction_count"],
+            }
+    except Exception as e:
+        logger.error(f"Error fetching graph stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@customer_router.get("/customers/graph/relationships")
+async def get_customer_relationships(
+    request: Request,
+    customer_id: Optional[str] = None,
+    max_depth: int = 5,
+    limit: int = 100,
+):
+    """
+    Find all customers related through transactions (DIRECT relationships only for performance).
+
+    Query Parameters:
+    - customer_id: Optional. If provided, finds relationships for this specific customer.
+                   If omitted, finds all customer relationships in the graph.
+    - max_depth: Currently not used - only direct relationships are returned for performance
+    - limit: Maximum number of relationship paths to return (default: 100, max: 500)
+
+    Returns:
+    - List of customer relationships with:
+        - customer1: Source customer details
+        - customer2: Target customer details
+        - depth: Number of shared transactions between customers
+        - relationship_strength: "direct" (customers share transactions)
+        - linking_transactions: List of transactions that connect the customers
+        - accounts_involved: List of accounts involved in the transactions
+
+    Example:
+    - Customers connected through transactions they both participate in
+    """
+    try:
+        # Validate parameters
+        if max_depth < 1 or max_depth > 10:
+            raise HTTPException(
+                status_code=400, detail="max_depth must be between 1 and 10"
+            )
+
+        if limit < 1 or limit > 500:
+            raise HTTPException(
+                status_code=400, detail="limit must be between 1 and 500"
+            )
+
+        # Get Neo4j database from app state
+        neo4j_db = getattr(request.app.state, "neo4j_db", None)
+        if not neo4j_db:
+            raise HTTPException(
+                status_code=503, detail="Neo4j graph database not available"
+            )
+
+        relationships = await neo4j_db.get_related_customers(
+            customer_id=customer_id, max_depth=max_depth, limit=limit
+        )
+
+        return {
+            "query_params": {
+                "customer_id": customer_id,
+                "max_depth": max_depth,
+                "limit": limit,
+            },
+            "total_relationships": len(relationships),
+            "relationships": relationships,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching customer relationships from Neo4j: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_CONFIG, MAX_CONTENT_LENGTH
 from app.database.connection import Database, PostgresDatabase
+from app.database.neo4j_connection import Neo4jDatabase
 from app.routes.data_routes import data_router
 from app.routes.user_routes import user_router
 from app.routes.rules_routes import rule_router
@@ -25,6 +26,21 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to initialize PostgreSQL: {e}")
         logger.warning("Running without PostgreSQL - rules will not be persisted")
 
+    # Initialize Neo4j database connection
+    logger.info("Initializing Neo4j graph database connection...")
+    neo4j_db = Neo4jDatabase()
+    try:
+        await neo4j_db.initialize()
+        logger.info("Neo4j graph database connection initialized")
+        # Store instance in app state for access in routes
+        app.state.neo4j_db = neo4j_db
+    except Exception as e:
+        logger.warning(f"Failed to initialize Neo4j: {e}")
+        logger.warning(
+            "Running without Neo4j - transaction relationships will not be stored"
+        )
+        app.state.neo4j_db = None
+
     # Initialize in-memory database for legacy support
     Database.initialize()
 
@@ -37,6 +53,15 @@ async def lifespan(app: FastAPI):
         logger.info("PostgreSQL database connection pool closed")
     except Exception as e:
         logger.warning(f"Error closing PostgreSQL pool: {e}")
+
+    # Shutdown: Close Neo4j connection
+    logger.info("Closing Neo4j connection...")
+    try:
+        if hasattr(app.state, "neo4j_db") and app.state.neo4j_db:
+            await app.state.neo4j_db.close()
+            logger.info("Neo4j connection closed")
+    except Exception as e:
+        logger.warning(f"Error closing Neo4j connection: {e}")
 
 
 def create_app() -> FastAPI:
