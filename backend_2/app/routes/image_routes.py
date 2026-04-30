@@ -2,6 +2,12 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.database.connection import Database
+from app.services.image_storage_service import get_image_storage_service
+from app.services.metadata_extraction_service import get_metadata_extraction_service
+from app.services.tampering_detection_service import get_tampering_detection_service
+from app.services.forensic_analysis_service import get_forensic_analysis_service
+from app.services.ai_detection_service import get_ai_detection_service
+from app.services.reverse_search_service import get_reverse_search_service
 import logging
 import os
 import asyncio
@@ -22,7 +28,7 @@ class ImageAnalysis(BaseModel):
     authenticity_score: Optional[float] = None
     tampering_detected: Optional[bool] = None
     ai_generated_probability: Optional[float] = None
-    findings: List[Dict[str, Any]] = []
+    findings: Optional[Dict[str, Any]] = None  # Changed from List to Dict to match verification_results
     metadata: Dict[str, Any] = {}
 
 class ImageUploadResponse(BaseModel):
@@ -52,7 +58,11 @@ async def upload_image(file: UploadFile = File(...)):
         except Exception as e:
             raise HTTPException(status_code=400, detail="Invalid image file")
         
-        # Create image analysis record
+        # Extract metadata using metadata extraction service
+        metadata_service = get_metadata_extraction_service()
+        extracted_metadata = metadata_service.extract_metadata(content)
+        
+        # Create image analysis record in database
         db = Database.get_database()
         image_analysis = {
             "filename": file.filename,
@@ -60,19 +70,33 @@ async def upload_image(file: UploadFile = File(...)):
             "upload_timestamp": datetime.utcnow(),
             "analysis_status": "processing",
             "file_size": len(content),
-            "metadata": {
-                "width": width,
-                "height": height,
-                "format": image.format
-            }
+            "metadata": extracted_metadata
         }
         
         result = await db.image_analysis.insert_one(image_analysis)
         image_id = str(result.inserted_id)
         
-        # TODO: Implement actual image processing
-        # For now, simulate processing
-        await asyncio.sleep(0.1)  # Simulate processing time
+        # Save image to disk using storage service
+        storage_service = get_image_storage_service()
+        try:
+            file_path = storage_service.save_image(content, image_id, file_extension)
+            image_hash = storage_service.get_image_hash(content)
+            
+            # Update database with storage info
+            await db.image_analysis.update_one(
+                {"_id": image_id},
+                {"$set": {
+                    "file_path": file_path,
+                    "image_hash": image_hash
+                }}
+            )
+            
+            # Note: Image indexing for local search removed - using SerpAPI only
+            
+            logger.info(f"Image {image_id} saved to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to save image {image_id} to disk: {e}")
+            # Don't fail the upload, but log the error
         
         return ImageUploadResponse(
             image_id=image_id,
@@ -95,13 +119,29 @@ async def get_image_analysis(image_id: str):
         if not analysis:
             raise HTTPException(status_code=404, detail="Image analysis not found")
 
-        analysis["id"] = str(analysis["_id"])
-        del analysis["_id"]
+        # Safely convert _id to id
+        if "_id" in analysis:
+            analysis["id"] = str(analysis["_id"])
+            del analysis["_id"]
+        elif "id" not in analysis:
+            # If no _id found, use the provided image_id
+            analysis["id"] = image_id
+        
+        # Handle backward compatibility: if findings is a list, convert to dict format
+        if "findings" in analysis and isinstance(analysis["findings"], list):
+            # Old format was a list, convert to dict if possible
+            if len(analysis["findings"]) > 0 and isinstance(analysis["findings"][0], dict):
+                # If it's a list of dicts, take the first one or merge them
+                analysis["findings"] = analysis["findings"][0] if len(analysis["findings"]) > 0 else None
+            else:
+                analysis["findings"] = None
 
         return ImageAnalysis(**analysis)
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error fetching image analysis {image_id}: {e}")
+        logger.error(f"Error fetching image analysis {image_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @image_router.get("/analysis", response_model=List[ImageAnalysis])
@@ -109,13 +149,30 @@ async def get_all_image_analyses():
     """Get all image analyses"""
     try:
         db = Database.get_database()
-        analyses_cursor = db.image_analysis.find()
+        analyses_cursor = await db.image_analysis.find()
         analyses = []
         
         async for analysis in analyses_cursor:
-            analysis["id"] = str(analysis["_id"])
-            del analysis["_id"]
-            analyses.append(ImageAnalysis(**analysis))
+            # Safely convert _id to id
+            if "_id" in analysis:
+                analysis["id"] = str(analysis["_id"])
+                del analysis["_id"]
+            elif "id" not in analysis:
+                # If no _id, skip or use a default
+                analysis["id"] = "unknown"
+            
+            # Handle backward compatibility: if findings is a list, convert to dict format
+            if "findings" in analysis and isinstance(analysis["findings"], list):
+                if len(analysis["findings"]) > 0 and isinstance(analysis["findings"][0], dict):
+                    analysis["findings"] = analysis["findings"][0] if len(analysis["findings"]) > 0 else None
+                else:
+                    analysis["findings"] = None
+            
+            try:
+                analyses.append(ImageAnalysis(**analysis))
+            except Exception as e:
+                logger.warning(f"Skipping invalid analysis record: {e}")
+                continue
         
         return analyses
         
@@ -134,22 +191,83 @@ async def verify_image_authenticity(image_id: str):
         if not img:
             raise HTTPException(status_code=404, detail="Image not found")
 
-        # TODO: Implement actual image verification logic
-        # Mock verification results
+        # Get existing metadata from database
+        existing_metadata = img.get("metadata", {})
+        metadata_analysis = existing_metadata.get("analysis", {})
+        
+        # Load image from storage for tampering detection
+        storage_service = get_image_storage_service()
+        tampering_results = {"error": "Image not found in storage"}
+        
+        file_path = img.get("file_path")
+        file_type = img.get("file_type", ".jpg")
+        
+        if file_path:
+            image_content = storage_service.read_image(
+                image_id,
+                file_type
+            )
+            
+            if image_content:
+                # Perform tampering detection
+                tampering_service = get_tampering_detection_service()
+                tampering_results = tampering_service.detect_tampering(image_content)
+                
+                # Perform forensic analysis
+                forensic_service = get_forensic_analysis_service()
+                forensic_results = forensic_service.perform_forensic_analysis(image_content)
+                
+                # Perform AI-generated detection
+                ai_detection_service = get_ai_detection_service()
+                ai_results = ai_detection_service.detect_ai_generated(image_content, img.get("filename"))
+        else:
+            forensic_results = {"error": "Image not found in storage"}
+            ai_results = {"error": "Image not found in storage", "ai_generated_probability": 0.0}
+        
+        # Calculate authenticity score based on metadata, tampering, and forensic results
+        authenticity_score = 1.0
+        
+        # Reduce score based on metadata red flags
+        if metadata_analysis.get("red_flags"):
+            authenticity_score -= len(metadata_analysis["red_flags"]) * 0.1
+        
+        # Reduce score based on tampering detection
+        if tampering_results.get("tampering_detected", False):
+            authenticity_score -= tampering_results.get("confidence", 0.5) * 0.3
+        
+        # Reduce score based on forensic analysis
+        forensic_manipulation = forensic_results.get("manipulation_probability", 0.0)
+        if forensic_manipulation > 0.3:
+            authenticity_score -= forensic_manipulation * 0.4
+        
+        # Use forensic score if available
+        if "forensic_score" in forensic_results:
+            authenticity_score = (authenticity_score + forensic_results["forensic_score"]) / 2
+        
+        # Ensure score is between 0 and 1
+        authenticity_score = max(0.0, min(1.0, authenticity_score))
+        
+        # Adjust authenticity score based on AI detection
+        ai_probability = ai_results.get("ai_generated_probability", 0.0)
+        if ai_probability > 0.5:
+            # Reduce authenticity if AI-generated
+            authenticity_score *= (1.0 - ai_probability * 0.3)
+        
+        # Build verification results
         verification_results = {
-            "authenticity_score": 0.85,
-            "tampering_detected": False,
-            "ai_generated_probability": 0.12,
+            "authenticity_score": round(authenticity_score, 2),
+            "tampering_detected": tampering_results.get("tampering_detected", False),
+            "ai_generated_probability": round(ai_probability, 2),
             "metadata_analysis": {
-                "exif_data_present": True,
-                "camera_model": "Canon EOS R5",
-                "timestamp_consistent": True
+                "exif_present": metadata_analysis.get("exif_present", False),
+                "camera_info": metadata_analysis.get("camera_info", {}),
+                "timestamp_consistent": metadata_analysis.get("timestamp_consistent"),
+                "red_flags": metadata_analysis.get("red_flags", []),
+                "anomalies": metadata_analysis.get("metadata_anomalies", [])
             },
-            "pixel_analysis": {
-                "compression_artifacts": "Normal",
-                "noise_patterns": "Consistent",
-                "edge_analysis": "Natural"
-            },
+            "pixel_analysis": tampering_results,
+            "forensic_analysis": forensic_results,
+            "ai_detection": ai_results,
             "verification_timestamp": datetime.utcnow()
         }
 
@@ -175,7 +293,7 @@ async def verify_image_authenticity(image_id: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @image_router.post("/reverse-search/{image_id}")
-async def reverse_image_search(image_id: str):
+async def reverse_image_search(image_id: str, limit: int = 10):
     """Perform reverse image search to detect stolen images"""
     try:
         db = Database.get_database()
@@ -185,18 +303,52 @@ async def reverse_image_search(image_id: str):
         if not img:
             raise HTTPException(status_code=404, detail="Image not found")
 
-        # TODO: Implement actual reverse image search
-        # Mock reverse search results
-        search_results = {
-            "matches_found": 0,
-            "similar_images": [],
-            "sources_checked": ["Google Images", "TinEye", "Bing Images"],
-            "search_timestamp": datetime.utcnow(),
-            "confidence": 0.95
-        }
+        # Load image from storage
+        storage_service = get_image_storage_service()
+        file_path = img.get("file_path")
+        file_type = img.get("file_type", ".jpg")
+        
+        if not file_path:
+            raise HTTPException(status_code=404, detail="Image file not found in storage")
+        
+        image_content = storage_service.read_image(image_id, file_type)
+        if not image_content:
+            raise HTTPException(status_code=404, detail="Could not read image file")
+        
+        # Perform reverse search using SerpAPI only
+        reverse_search_service = get_reverse_search_service()
+        search_results = await reverse_search_service.search_similar(image_content, limit=limit)
+        
+        # Add metadata
+        search_results["search_timestamp"] = datetime.utcnow()
+        
+        # Calculate confidence based on matches found
+        if search_results.get("similar_images"):
+            # Use highest similarity as confidence
+            max_similarity = max(img.get("similarity", 0.0) for img in search_results["similar_images"])
+            search_results["confidence"] = max_similarity
+        else:
+            search_results["confidence"] = 0.0
+        
+        # Add stolen image indicator based on matches
+        if search_results.get("matches_found", 0) > 0:
+            similar_images = search_results.get("similar_images", [])
+            if len(similar_images) > 0:
+                search_results["potentially_stolen"] = True
+                search_results["stolen_confidence"] = min(0.9, 0.5 + (len(similar_images) * 0.05))
+                search_results["stolen_indicators"] = [
+                    f"Found {len(similar_images)} potential matches on the web",
+                    f"Top match: {similar_images[0].get('title', 'Unknown')} at {similar_images[0].get('link', 'N/A')}"
+                ]
+            else:
+                search_results["potentially_stolen"] = False
+        else:
+            search_results["potentially_stolen"] = False
 
         return search_results
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error performing reverse search for image {image_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
