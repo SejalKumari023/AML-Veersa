@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { Card } from "~/components/ui/card";
 import {
     Table,
@@ -23,37 +22,92 @@ interface Alert {
     assigned_to: string | null;
 }
 
+// Hardcoded sample alert data
+const SAMPLE_ALERTS: Alert[] = [
+    {
+        id: "1",
+        transaction_id: "TXN-2024-001234",
+        alert_type: "Large Transaction",
+        severity: "high",
+        message: "Unusual large transaction detected exceeding $500,000 threshold",
+        timestamp: "2024-11-02T10:30:00Z",
+        status: "open",
+        assigned_to: "John Smith"
+    },
+    {
+        id: "2",
+        transaction_id: "TXN-2024-001235",
+        alert_type: "Suspicious Pattern",
+        severity: "medium",
+        message: "Multiple small transactions detected within short timeframe",
+        timestamp: "2024-11-02T09:15:00Z",
+        status: "investigating",
+        assigned_to: "Jane Doe"
+    },
+    {
+        id: "3",
+        transaction_id: "TXN-2024-001236",
+        alert_type: "Geographic Risk",
+        severity: "high",
+        message: "Transaction to high-risk jurisdiction flagged",
+        timestamp: "2024-11-02T08:45:00Z",
+        status: "open",
+        assigned_to: null
+    },
+    {
+        id: "4",
+        transaction_id: "TXN-2024-001237",
+        alert_type: "Velocity Check",
+        severity: "low",
+        message: "Increased transaction velocity compared to historical pattern",
+        timestamp: "2024-11-01T16:20:00Z",
+        status: "resolved",
+        assigned_to: "Mike Johnson"
+    },
+    {
+        id: "5",
+        transaction_id: "TXN-2024-001238",
+        alert_type: "Sanctions Screening",
+        severity: "high",
+        message: "Potential sanctions list match requires verification",
+        timestamp: "2024-11-01T14:10:00Z",
+        status: "escalated",
+        assigned_to: "Sarah Williams"
+    },
+    {
+        id: "6",
+        transaction_id: "TXN-2024-001239",
+        alert_type: "Structuring",
+        severity: "medium",
+        message: "Possible structuring activity detected across multiple accounts",
+        timestamp: "2024-11-01T11:05:00Z",
+        status: "investigating",
+        assigned_to: "John Smith"
+    },
+    {
+        id: "7",
+        transaction_id: "TXN-2024-001240",
+        alert_type: "Customer Due Diligence",
+        severity: "low",
+        message: "Customer due diligence update required",
+        timestamp: "2024-11-01T09:30:00Z",
+        status: "open",
+        assigned_to: null
+    },
+    {
+        id: "8",
+        transaction_id: "TXN-2024-001241",
+        alert_type: "Beneficial Ownership",
+        severity: "medium",
+        message: "Unclear beneficial ownership structure requires review",
+        timestamp: "2024-10-31T15:45:00Z",
+        status: "open",
+        assigned_to: "Jane Doe"
+    }
+];
+
 export default function AlertsPage() {
-    const [alerts, setAlerts] = useState<Alert[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-
-    useEffect(() => {
-        const fetchAlerts = async () => {
-            try {
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api"
-
-                const response = await fetch(`${apiUrl}/data/alerts?limit=100`, {
-                    method: "GET",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                })
-
-                if (!response.ok) {
-                    throw new Error("Failed to fetch alerts");
-                }
-                const data = await response.json();
-                setAlerts(data);
-            } catch (err) {
-                setError(err instanceof Error ? err.message : "An error occurred");
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchAlerts();
-    }, []);
+    const alerts = SAMPLE_ALERTS;
 
     const getSeverityColor = (severity: string) => {
         switch (severity.toLowerCase()) {
@@ -67,31 +121,6 @@ export default function AlertsPage() {
                 return "text-gray-600";
         }
     };
-
-    if (loading) {
-        return (
-            <div className="p-6">
-                <div className="animate-pulse">
-                    <div className="h-4 bg-gray-200 rounded w-1/4 mb-4"></div>
-                    <div className="space-y-3">
-                        {[...Array(5)].map((_, i) => (
-                            <div key={i} className="h-4 bg-gray-200 rounded w-full"></div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (error) {
-        return (
-            <div className="p-6">
-                <Card className="p-4 bg-red-50 text-red-600">
-                    <p>{error}</p>
-                </Card>
-            </div>
-        );
-    }
 
     return (
         <div className="p-6">
