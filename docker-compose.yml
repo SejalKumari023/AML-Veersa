@@ -13,6 +13,8 @@ services:
         build: ./backend_1
         expose:
             - "5001"
+        ports:
+            - "5001:5001"
         environment:
             - PORT=5001
             - HOST=0.0.0.0
@@ -22,6 +24,10 @@ services:
             - POSTGRES_DB=baer_aml
             - POSTGRES_USER=baer_aml
             - POSTGRES_PASSWORD=baer_aml
+            - GROQ_API_KEY=${GROQ_API_KEY}
+            - GROQ_API_BASE=${GROQ_API_BASE}
+        env_file:
+            - .env
         depends_on:
             - db
         restart: always
