@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { getUser } from "~/lib/auth";
 import { Card } from "~/components/ui/card";
 import {
     Table,
@@ -107,6 +110,8 @@ const SAMPLE_ALERTS: Alert[] = [
 ];
 
 export default function AlertsPage() {
+    const router = useRouter();
+    useEffect(() => { if (!getUser()) router.replace("/auth/login"); }, [router]);
     const alerts = SAMPLE_ALERTS;
 
     const getSeverityColor = (severity: string) => {

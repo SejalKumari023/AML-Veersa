@@ -35,7 +35,7 @@ export default function ClientVerificationPage() {
   useEffect(() => {
     const user = getUser();
     if (!user) {
-      router.push("/auth/login");
+      router.replace("/auth/login");
     } else {
       setCurrentUser({
         name: user.name,

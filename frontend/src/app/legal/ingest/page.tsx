@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
+import { getUser } from "~/lib/auth"
 import { Upload, FileText, CheckCircle2 } from "lucide-react"
 import {
     Card,
@@ -20,6 +22,9 @@ interface UploadedFile {
 }
 
 export default function IngestPage() {
+    const router = useRouter()
+    useEffect(() => { if (!getUser()) router.replace("/auth/login") }, [router])
+
     const [dragActive, setDragActive] = useState(false)
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([
         {

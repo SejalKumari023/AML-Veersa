@@ -1,8 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { AlertCircle, CheckCircle2, Clock, FileText, Download, ArrowRight, Link as LinkIcon } from "lucide-react"
 import Link from "next/link"
+import { getUser } from "~/lib/auth"
 import {
     Card,
     CardHeader,
@@ -36,6 +38,12 @@ interface Action {
 }
 
 export default function LegalPage() {
+    const router = useRouter()
+
+    useEffect(() => {
+        if (!getUser()) router.replace("/auth/login")
+    }, [router])
+
     const [notices, setNotices] = useState<Notice[]>([
         {
             id: "1",

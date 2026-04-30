@@ -6,8 +6,8 @@ import { AppSidebar } from "~/components/app-sidebar";
 
 
 export const metadata: Metadata = {
-    title: "Baerly Awake AML/KYC",
-    description: "Created by Baerly Awake",
+    title: "AML",
+    description: "AML & KYC monitoring platform",
     icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
@@ -17,13 +17,11 @@ export default function RootLayout({
     return (
         <html lang="en">
             <body style={{ margin: 0, padding: 0 }}>
-                <SidebarProvider>
-                    <div style={{ display: "flex", minHeight: "100vh", width: "100vw" }}>
-                        <AppSidebar />
-                        <div style={{ flex: 1, minWidth: 0, height: "100vh", overflow: "auto" }}>
-                            {children}
-                        </div>
-                    </div>
+                <SidebarProvider defaultOpen={true}>
+                    <AppSidebar />
+                    <main style={{ flex: 1, minWidth: 0, height: "100vh", overflow: "auto" }}>
+                        {children}
+                    </main>
                 </SidebarProvider>
             </body>
         </html>

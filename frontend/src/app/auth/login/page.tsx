@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "~/components/ui/card";
-import { setUser, type UserType } from "~/lib/auth";
+import { loginUser, getUser } from "~/lib/auth";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -16,58 +16,44 @@ export default function LoginPage() {
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
 
+    useEffect(() => {
+        const user = getUser();
+        if (user) {
+            const dest = user.userType === "legal" ? "/legal" : user.userType === "frontoffice" ? "/frontoffice" : "/compliance";
+            router.replace(dest);
+        }
+    }, [router]);
+
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError("");
         setIsLoading(true);
 
         try {
-            // TODO: Replace with actual API call to backend
-            // For now, this is a mock implementation
-
-            // Simulate API delay
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            // Mock validation - in production, this should be done by the backend
             if (!email || !password) {
                 throw new Error("Please enter both email and password");
             }
 
-            // Mock user data - in production, this would come from the backend
-            // You can mock different users based on email for testing:
-            // legal@example.com -> legal user
-            // compliance@example.com -> compliance user
-            // frontoffice@example.com -> frontoffice user
-            let userType: UserType = "compliance";
-            if (email.includes("legal")) {
-                userType = "legal";
-            } else if (email.includes("frontoffice")) {
-                userType = "frontoffice";
+            const result = loginUser(email, password);
+
+            if ("error" in result) {
+                throw new Error(result.error);
             }
 
-            const user = {
-                id: Math.random().toString(36).substring(7),
-                email: email,
-                name: email.split("@")[0] || "User",
-                userType: userType,
-            };
+            const { user } = result;
 
-            // Save user to localStorage
-            setUser(user);
-
-            // Redirect based on user type
-            switch (userType) {
+            switch (user.userType) {
                 case "legal":
-                    router.push("/legal");
+                    router.replace("/legal");
                     break;
                 case "compliance":
-                    router.push("/compliance");
+                    router.replace("/compliance");
                     break;
                 case "frontoffice":
-                    router.push("/frontoffice");
+                    router.replace("/frontoffice");
                     break;
                 default:
-                    router.push("/");
+                    router.replace("/");
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to login");
@@ -120,16 +106,8 @@ export default function LoginPage() {
                                 disabled={isLoading}
                             />
                         </div>
-                        <div className="text-muted-foreground text-xs">
-                            <p className="mb-1">For testing, use email patterns:</p>
-                            <ul className="list-inside list-disc space-y-0.5">
-                                <li>legal@example.com → Legal user</li>
-                                <li>compliance@example.com → Compliance user</li>
-                                <li>frontoffice@example.com → Front Office user</li>
-                            </ul>
-                        </div>
                     </CardContent>
-                    <CardFooter className="flex flex-col gap-4">
+                    <CardFooter className="flex flex-col gap-4 pt-6">
                         <Button type="submit" className="w-full" disabled={isLoading}>
                             {isLoading ? "Logging in..." : "Login"}
                         </Button>

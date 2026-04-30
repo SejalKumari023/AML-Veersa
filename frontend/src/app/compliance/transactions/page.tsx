@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { getUser } from "~/lib/auth";
 import { Button } from "~/components/ui/button";
 import {
   Card,
@@ -106,6 +108,8 @@ interface RuleExecutionResult {
 }
 
 export default function ComplianceTransactionsPage() {
+    const router = useRouter();
+    useEffect(() => { if (!getUser()) router.replace("/auth/login"); }, [router]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [isLoading, setIsLoading] = useState(true);

@@ -1,16 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "~/components/ui/card";
-import { setUser, getUserTypeLabel, type UserType } from "~/lib/auth";
+import { registerUser, getUserTypeLabel, getUser, type UserType } from "~/lib/auth";
 
 export default function RegisterPage() {
     const router = useRouter();
+
+    useEffect(() => {
+        const user = getUser();
+        if (user) {
+            const dest = user.userType === "legal" ? "/legal" : user.userType === "frontoffice" ? "/frontoffice" : "/compliance";
+            router.replace(dest);
+        }
+    }, [router]);
+
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -25,7 +34,6 @@ export default function RegisterPage() {
         setIsLoading(true);
 
         try {
-            // Validation
             if (!name || !email || !password || !confirmPassword) {
                 throw new Error("Please fill in all fields");
             }
@@ -38,36 +46,24 @@ export default function RegisterPage() {
                 throw new Error("Password must be at least 8 characters long");
             }
 
-            // TODO: Replace with actual API call to backend
-            // For now, this is a mock implementation
+            const result = registerUser({ email, name, userType }, password);
 
-            // Simulate API delay
-            await new Promise(resolve => setTimeout(resolve, 500));
+            if ("error" in result) {
+                throw new Error(result.error);
+            }
 
-            // Mock user creation - in production, this would be done by the backend
-            const user = {
-                id: Math.random().toString(36).substring(7),
-                email: email,
-                name: name,
-                userType: userType,
-            };
-
-            // Save user to localStorage
-            setUser(user);
-
-            // Redirect based on user type
             switch (userType) {
                 case "legal":
-                    router.push("/legal");
+                    router.replace("/legal");
                     break;
                 case "compliance":
-                    router.push("/compliance");
+                    router.replace("/compliance");
                     break;
                 case "frontoffice":
-                    router.push("/frontoffice");
+                    router.replace("/frontoffice");
                     break;
                 default:
-                    router.push("/");
+                    router.replace("/");
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to register");
@@ -165,7 +161,7 @@ export default function RegisterPage() {
                             />
                         </div>
                     </CardContent>
-                    <CardFooter className="flex flex-col gap-4">
+                    <CardFooter className="flex flex-col gap-4 pt-6">
                         <Button type="submit" className="w-full" disabled={isLoading}>
                             {isLoading ? "Creating account..." : "Register"}
                         </Button>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
+import { getUser } from "~/lib/auth"
 import {
     Search,
     Users,
@@ -112,6 +114,8 @@ interface RelationshipResponse {
 }
 
 export default function FrontOfficePage() {
+    const router = useRouter()
+    useEffect(() => { if (!getUser()) router.replace("/auth/login") }, [router])
     const [clients, setClients] = useState<Client[]>([])
     const [selectedClient, setSelectedClient] = useState<Client | null>(null)
     const [searchTerm, setSearchTerm] = useState("")
@@ -322,25 +326,6 @@ export default function FrontOfficePage() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-auto p-6">
-        <div className="space-y-6">
-          {/* Stats Cards */}
-          <div className="grid gap-4 md:grid-cols-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-muted-foreground text-sm">
-                      Total Clients
-                    </p>
-                    <p className="mt-2 text-3xl font-bold">{clients.length}</p>
-                  </div>
-                  <Users className="text-muted-foreground size-8" />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Main Content */}
-            <div className="flex-1 overflow-auto p-6">
                 {loading ? (
                     <div className="flex min-h-[60vh] items-center justify-center">
                         <div className="text-center">
@@ -888,9 +873,6 @@ export default function FrontOfficePage() {
                     </div>
                 )}
             </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
