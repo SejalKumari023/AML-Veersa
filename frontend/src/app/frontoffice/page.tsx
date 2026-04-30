@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import { useState, useEffect } from "react"
 import {
@@ -35,27 +35,27 @@ import { env } from "~/env"
 const BACKEND_1_API_URL = env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api"
 
 interface Client {
-    id: string
-    name: string
-    type: "individual" | "corporate"
-    email: string
-    phone: string
-    country: string
-    status: "active" | "dormant" | "flagged" | "archived"
-    riskRating: "low" | "medium" | "high"
-    kycStatus: "compliant" | "pending" | "expired"
-    kycDate: string
-    kycExpiryDate: string
-    isPep: boolean
-    eddRequired: boolean
-    eddCompleted: boolean
-    totalTransactions: number
-    totalVolume: number
-    lastTransaction: string
-    industry?: string
-    registrationNumber?: string
-    complianceScore: number
-    flags: string[]
+  id: string;
+  name: string;
+  type: "individual" | "corporate";
+  email: string;
+  phone: string;
+  country: string;
+  status: "active" | "dormant" | "flagged" | "archived";
+  riskRating: "low" | "medium" | "high";
+  kycStatus: "compliant" | "pending" | "expired";
+  kycDate: string;
+  kycExpiryDate: string;
+  isPep: boolean;
+  eddRequired: boolean;
+  eddCompleted: boolean;
+  totalTransactions: number;
+  totalVolume: number;
+  lastTransaction: string;
+  industry?: string;
+  registrationNumber?: string;
+  complianceScore: number;
+  flags: string[];
 }
 
 interface BackendCustomer {
@@ -242,80 +242,102 @@ export default function FrontOfficePage() {
         fetchRelationships()
     }, [selectedClient])
 
-    const filteredClients = clients.filter(
-        (client) =>
-            client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            client.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            client.country.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+  const filteredClients = clients.filter(
+    (client) =>
+      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.country.toLowerCase().includes(searchTerm.toLowerCase()),
+  );
 
-    const getStatusColor = (status: Client["status"]) => {
-        switch (status) {
-            case "active":
-                return "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/20"
-            case "dormant":
-                return "text-blue-600 bg-blue-100 dark:bg-blue-900/20"
-            case "flagged":
-                return "text-amber-600 bg-amber-100 dark:bg-amber-900/20"
-            case "archived":
-                return "text-muted-foreground bg-muted"
-            default:
-                return "text-muted-foreground"
-        }
+  const getStatusColor = (status: Client["status"]) => {
+    switch (status) {
+      case "active":
+        return "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/20";
+      case "dormant":
+        return "text-blue-600 bg-blue-100 dark:bg-blue-900/20";
+      case "flagged":
+        return "text-amber-600 bg-amber-100 dark:bg-amber-900/20";
+      case "archived":
+        return "text-muted-foreground bg-muted";
+      default:
+        return "text-muted-foreground";
     }
+  };
 
-    const getRiskColor = (risk: Client["riskRating"]) => {
-        switch (risk) {
-            case "high":
-                return "text-destructive bg-destructive/10"
-            case "medium":
-                return "text-amber-600 bg-amber-100 dark:bg-amber-900/20"
-            case "low":
-                return "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/20"
-            default:
-                return "text-muted-foreground"
-        }
+  const getRiskColor = (risk: Client["riskRating"]) => {
+    switch (risk) {
+      case "high":
+        return "text-destructive bg-destructive/10";
+      case "medium":
+        return "text-amber-600 bg-amber-100 dark:bg-amber-900/20";
+      case "low":
+        return "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/20";
+      default:
+        return "text-muted-foreground";
     }
+  };
 
-    const getKycColor = (kycStatus: Client["kycStatus"]) => {
-        switch (kycStatus) {
-            case "compliant":
-                return "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/20"
-            case "pending":
-                return "text-amber-600 bg-amber-100 dark:bg-amber-900/20"
-            case "expired":
-                return "text-destructive bg-destructive/10"
-            default:
-                return "text-muted-foreground"
-        }
+  const getKycColor = (kycStatus: Client["kycStatus"]) => {
+    switch (kycStatus) {
+      case "compliant":
+        return "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/20";
+      case "pending":
+        return "text-amber-600 bg-amber-100 dark:bg-amber-900/20";
+      case "expired":
+        return "text-destructive bg-destructive/10";
+      default:
+        return "text-muted-foreground";
     }
+  };
 
-    const getComplianceScoreColor = (score: number) => {
-        if (score >= 90) return "text-emerald-600"
-        if (score >= 75) return "text-blue-600"
-        if (score >= 60) return "text-amber-600"
-        return "text-destructive"
-    }
+  const getComplianceScoreColor = (score: number) => {
+    if (score >= 90) return "text-emerald-600";
+    if (score >= 75) return "text-blue-600";
+    if (score >= 60) return "text-amber-600";
+    return "text-destructive";
+  };
 
-    const activeClients = clients.filter((c) => c.status === "active").length
-    const kycPendingCount = clients.filter((c) => c.kycStatus === "pending").length
-    const flaggedCount = clients.filter((c) => c.status === "flagged").length
+  const activeClients = clients.filter((c) => c.status === "active").length;
+  const kycPendingCount = clients.filter(
+    (c) => c.kycStatus === "pending",
+  ).length;
+  const flaggedCount = clients.filter((c) => c.status === "flagged").length;
 
-    return (
-        <div className="flex min-h-screen flex-col bg-background">
-            {/* Header */}
-            <div className="border-b border-border bg-card px-6 py-4">
+  return (
+    <div className="bg-background flex min-h-screen flex-col">
+      {/* Header */}
+      <div className="border-border bg-card border-b px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-foreground text-3xl font-bold tracking-tight">
+              Client Management
+            </h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Manage and review client profiles, KYC status, and compliance
+              information
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="space-y-6">
+          {/* Stats Cards */}
+          <div className="grid gap-4 md:grid-cols-4">
+            <Card>
+              <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
-                    <div>
-                        <h1 className="text-3xl font-bold tracking-tight text-foreground">
-                            Client Management
-                        </h1>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                            Manage and review client profiles, KYC status, and compliance information
-                        </p>
-                    </div>
+                  <div>
+                    <p className="text-muted-foreground text-sm">
+                      Total Clients
+                    </p>
+                    <p className="mt-2 text-3xl font-bold">{clients.length}</p>
+                  </div>
+                  <Users className="text-muted-foreground size-8" />
                 </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* Main Content */}
             <div className="flex-1 overflow-auto p-6">
@@ -866,6 +888,9 @@ export default function FrontOfficePage() {
                     </div>
                 )}
             </div>
+          </div>
         </div>
-    )
+      </div>
+    </div>
+  );
 }
