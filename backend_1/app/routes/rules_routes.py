@@ -3,11 +3,18 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.database.connection import Database, PostgresDatabase
 from app.models import Transaction, RuleInput
-from app.agents.rule_parser import build_rule_parser_graph, RuleParserState
+from app.agents.rule_parser import (
+    apply_rule_to_transaction,
+    build_rule_parser_graph,
+    RuleParserState,
+    parse_function_code,
+)
 import logging
 import json
 from datetime import datetime
 from fastapi import Request
+import uuid
+
 
 logger = logging.getLogger(__name__)
 

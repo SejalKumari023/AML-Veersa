@@ -484,3 +484,112 @@ async def run_rules_on_single_transaction(transaction_id: str):
     except Exception as e:
         logger.error(f"Error running rules on transaction {transaction_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@data_router.get("/run-rule/{transaction_id}/{rule_id}")
+async def run_rule_on_single_transaction(transaction_id: str, rule_id: str):
+    """
+    Run a rule against a specific transaction and generate alerts.
+    This is useful for testing rules on new transactions or re-evaluating a transaction.
+    """
+    try:
+        # Fetch the transaction
+        transaction_data = await PostgresDatabase.get_transaction(transaction_id)
+        if not transaction_data:
+            raise HTTPException(
+                status_code=404, detail=f"Transaction {transaction_id} not found"
+            )
+
+        transaction = Transaction(**transaction_data)
+
+        # Fetch all rules
+        rules = await PostgresDatabase.get_rule(rule_id=rule_id)
+        if not rules:
+            return {
+                "message": "No rules found in database",
+                "transaction_id": transaction_id,
+                "rules_processed": 0,
+                "alerts_created": 0,
+            }
+
+        # Process each rule
+        alerts_created = 0
+        rules_processed = 0
+        triggered_rules = []
+        errors = []
+        rule = rules
+        try:
+            rule_id = rule["id"]
+            function_code = rule["function_code"]
+            rule_text = rule.get("rule_text", "")
+
+            # Parse and compile the function code using helper function
+            try:
+                apply_rule = parse_function_code(function_code)
+            except ValueError as e:
+                error_msg = f"Failed to parse rule {rule_id}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+            except Exception as e:
+                error_msg = f"Failed to compile rule {rule_id}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+            if not apply_rule:
+                rules_processed += 1
+                return
+
+            # Execute the rule using helper function
+            triggered = apply_rule_to_transaction(apply_rule, transaction)
+
+            # Create alert if rule was triggered
+            if triggered:
+                alert_data = {
+                    "id": str(uuid.uuid4()),
+                    "transaction_id": transaction.transaction_id,
+                    "alert_type": f"RULE_VIOLATION",
+                    "severity": "medium",
+                    "message": f"Rule '{rule_id}' triggered: {rule_text[:200]}",
+                    "timestamp": datetime.now(),
+                    "status": "active",
+                }
+
+                alert_id = await PostgresDatabase.insert_alert(alert_data)
+                alerts_created += 1
+                triggered_rules.append(
+                    {
+                        "rule_id": rule_id,
+                        "rule_text": rule_text,
+                        "alert_id": alert_id,
+                    }
+                )
+                logger.info(
+                    f"Alert created for transaction {transaction_id} based on rule {rule_id}"
+                )
+
+            rules_processed += 1
+
+        except Exception as e:
+            error_msg = f"Error processing rule {rule.get('id', 'unknown')}: {str(e)}"
+            logger.error(error_msg)
+            errors.append(error_msg)
+
+        response = {
+            "message": "Rules execution completed for transaction",
+            "transaction_id": transaction_id,
+            "rules_processed": rules_processed,
+            "total_rules": len(rules),
+            "alerts_created": alerts_created,
+            "triggered_rules": triggered_rules,
+        }
+
+        if errors:
+            response["errors"] = errors[:10]
+            response["total_errors"] = len(errors)
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running rules on transaction {transaction_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
