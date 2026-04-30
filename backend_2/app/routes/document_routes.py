@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any, Set
 from pathlib import Path
 
 import os
+import asyncio
 from datetime import datetime
 
 from app.database.connection import Database
@@ -80,24 +81,55 @@ async def process_document_task(
             {"$set": {"analysis_status": "processing"}}
         )
         
-        # Step 1: Process document with Docling
+        # Step 1: Process document with Google Cloud Vision API
         output_subdir = OUTPUT_DIR / document_id
-        output_subdir.mkdir(exist_ok=True)
+        output_subdir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Processing document with Docling...")
-        results = process_documents(
-            [file_path],
-            output_dir=str(output_subdir),
-            export_formats=["markdown", "json"],
-            auto_detect=True,
-            log_level="INFO",
+        logger.info(f"Processing document with Google Cloud Vision API...")
+        
+        # Run blocking sync operation in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
+            None,
+            lambda: process_documents(
+                [str(file_path)],  # Ensure Path is converted to string
+                output_dir=str(output_subdir),
+                export_formats=["markdown", "json"],
+                auto_detect=True,
+                log_level="INFO",
+            )
         )
         
-        if not results or not results[0].success:
-            raise Exception(f"Document processing failed")
+        if not results:
+            raise Exception("Document processing returned no results")
         
-        process_result = results[0]
+        first_result = results[0]
+        
+        # Handle both DocumentProcessingResult and dict (error) return types
+        if isinstance(first_result, dict):
+            # Error case - process_document returned a dict with error
+            error_msg = first_result.get("error", "Unknown error")
+            raise Exception(f"Document processing failed: {error_msg}")
+        
+        # Check success attribute (DocumentProcessingResult)
+        if not hasattr(first_result, 'success') or not first_result.success:
+            error_msg = getattr(first_result, 'error', "Document processing failed")
+            raise Exception(f"Document processing failed: {error_msg}")
+        
+        process_result = first_result
         logger.info(f"Document processed successfully")
+        
+        # Save processed_files to database immediately after processing completes
+        # This allows downloads to work even while validation is running
+        await db.document_analysis.update_one(
+            {"_id": document_id},
+            {
+                "$set": {
+                    "processed_files": process_result.output_paths,  # Already contains string paths
+                }
+            }
+        )
+        logger.info(f"Saved processed_files to database: {list(process_result.output_paths.keys())}")
         
         # Step 2: Use the DocumentProcessingResult directly for validation
         doc_processing_result = process_result
@@ -138,9 +170,7 @@ async def process_document_task(
                     "risk_score": risk_score,
                     "findings": findings,
                     "validation_report": validation_report,
-                    "processed_files": {
-                        k: str(v) for k, v in process_result.output_paths.items()
-                    },
+                    # processed_files already saved above after processing completes
                     "analysis_completed_at": datetime.utcnow(),
                     "metadata": {
                         "total_pages": validation_report.get("total_pages", 0),
@@ -277,15 +307,22 @@ async def upload_document(
             parsed_terms = {t.strip() for t in custom_terms.split(",")}
         
         # Schedule background processing
-        background_tasks.add_task(
-            process_document_task,
-            document_id,
-            file_path,
-            file.filename,
-            document_type,
-            parsed_sections,
-            parsed_terms,
-        )
+        # Use asyncio.create_task wrapper to properly handle async function
+        async def wrapped_task():
+            try:
+                await process_document_task(
+                    document_id,
+                    file_path,
+                    file.filename,
+                    document_type,
+                    parsed_sections,
+                    parsed_terms,
+                )
+            except Exception as e:
+                logger.error(f"Background task error for document {document_id}: {e}", exc_info=True)
+        
+        # Add the wrapped task
+        background_tasks.add_task(wrapped_task)
         
         logger.info(f"Document {document_id} queued for processing")
         
@@ -383,15 +420,20 @@ async def revalidate_document(
             document_type = validation_request.document_type
         
         # Schedule revalidation
-        background_tasks.add_task(
-            process_document_task,
-            document_id,
-            file_path,
-            doc["filename"],
-            document_type,
-            expected_sections,
-            custom_terms,
-        )
+        async def wrapped_revalidate_task():
+            try:
+                await process_document_task(
+                    document_id,
+                    file_path,
+                    doc["filename"],
+                    document_type,
+                    expected_sections,
+                    custom_terms,
+                )
+            except Exception as e:
+                logger.error(f"Background revalidation task error for document {document_id}: {e}", exc_info=True)
+        
+        background_tasks.add_task(wrapped_revalidate_task)
         
         # Update status
         await db.document_analysis.update_one(
@@ -414,7 +456,7 @@ async def revalidate_document(
 
 @document_router.get("/download/{document_id}/markdown")
 async def download_markdown(document_id: str):
-    """Download processed markdown file"""
+    """Download processed markdown file. Returns 202 if still processing."""
     try:
         db = Database.get_database()
         
@@ -422,15 +464,45 @@ async def download_markdown(document_id: str):
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         
+        # Check if processing is complete
+        status = doc.get("analysis_status", "pending")
+        if status not in ["completed", "failed"]:
+            # Processing still in progress
+            raise HTTPException(
+                status_code=202,  # Accepted - processing not complete
+                detail=f"Document is still being processed. Current status: {status}"
+            )
+        
+        if status == "failed":
+            error_msg = doc.get("error_message", "Unknown error")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document processing failed: {error_msg}"
+            )
+        
         processed_files = doc.get("processed_files", {})
         md_path = processed_files.get("markdown")
         
-        if not md_path or not Path(md_path).exists():
-            raise HTTPException(status_code=404, detail="Markdown file not found")
+        if not md_path:
+            logger.error(f"Markdown path not found in processed_files for {document_id}. Available keys: {list(processed_files.keys())}")
+            raise HTTPException(status_code=404, detail="Markdown file path not found in database")
+        
+        # Resolve path (handle both absolute and relative paths)
+        md_file = Path(md_path).resolve()
+        
+        if not md_file.exists():
+            logger.error(f"Markdown file does not exist: {md_file} (original path: {md_path})")
+            # Try alternative: check in output directory
+            alt_path = OUTPUT_DIR / document_id / f"{Path(doc['filename']).stem}.md"
+            if alt_path.exists():
+                md_file = alt_path
+                logger.info(f"Found markdown file at alternative path: {md_file}")
+            else:
+                raise HTTPException(status_code=404, detail=f"Markdown file not found at {md_file} or {alt_path}")
         
         from fastapi.responses import FileResponse
         return FileResponse(
-            path=md_path,
+            path=str(md_file),
             media_type="text/markdown",
             filename=f"{Path(doc['filename']).stem}.md"
         )
@@ -444,7 +516,7 @@ async def download_markdown(document_id: str):
 
 @document_router.get("/download/{document_id}/json")
 async def download_json(document_id: str):
-    """Download processed JSON file"""
+    """Download processed JSON file. Returns 202 if still processing."""
     try:
         db = Database.get_database()
         
@@ -452,15 +524,43 @@ async def download_json(document_id: str):
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
         
+        # Check if processing is complete
+        status = doc.get("analysis_status", "pending")
+        if status not in ["completed", "failed"]:
+            # Processing still in progress
+            raise HTTPException(
+                status_code=202,  # Accepted - processing not complete
+                detail=f"Document is still being processed. Current status: {status}"
+            )
+        
+        if status == "failed":
+            error_msg = doc.get("error_message", "Unknown error")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document processing failed: {error_msg}"
+            )
+        
         processed_files = doc.get("processed_files", {})
         json_path = processed_files.get("json")
         
-        if not json_path or not Path(json_path).exists():
-            raise HTTPException(status_code=404, detail="JSON file not found")
+        if not json_path:
+            logger.error(f"JSON path not found in processed_files for {document_id}. Available keys: {list(processed_files.keys())}")
+            raise HTTPException(status_code=404, detail="JSON file path not found in database")
+        
+        # Resolve path (handle both absolute and relative paths)
+        json_file = Path(json_path).resolve()
+        
+        if not json_file.exists():
+            logger.error(f"JSON file does not exist: {json_file} (original path: {json_path})")
+            # Try alternative: check in output directory
+            alt_path = OUTPUT_DIR / document_id / f"{Path(doc['filename']).stem}.json"
+            if not alt_path.exists():
+                raise HTTPException(status_code=404, detail=f"JSON file not found at {json_file}")
+            json_file = alt_path
         
         from fastapi.responses import FileResponse
         return FileResponse(
-            path=json_path,
+            path=str(json_file),
             media_type="application/json",
             filename=f"{Path(doc['filename']).stem}.json"
         )

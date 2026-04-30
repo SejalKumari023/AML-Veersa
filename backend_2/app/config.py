@@ -32,3 +32,7 @@ SERPAPI_ENABLED = bool(SERPAPI_API_KEY)
 ALLOWED_DOCUMENT_TYPES = [".pdf", ".doc", ".docx", ".txt"]
 ALLOWED_IMAGE_TYPES = [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
 UPLOAD_DIRECTORY = "uploads/"
+
+# Google Cloud Vision API configuration
+GOOGLE_CLOUD_VISION_ENABLED = os.getenv("GOOGLE_CLOUD_VISION_ENABLED", "True").lower() == "true"
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
