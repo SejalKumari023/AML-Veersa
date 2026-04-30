@@ -106,21 +106,22 @@ class ReverseSearchService:
 
     async def search_similar(self, image_content: bytes, image_url: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
         """
-        Search for similar images using SerpAPI Google Reverse Image Search
+        Search for similar images using SerpAPI Google and Bing Reverse Image Search
         
         Args:
             image_content: Raw image bytes
             image_url: Optional URL to the image (if provided, will use this instead of uploading)
-            limit: Maximum number of results to return
+            limit: Maximum number of results to return per engine
         
         Returns:
-            Dictionary containing search results
+            Dictionary containing search results from both engines
         """
         results = {
             "matches_found": 0,
             "similar_images": [],
             "sources_checked": [],
-            "search_method": "serpapi_google_reverse_image"
+            "search_method": "serpapi_multi_engine",
+            "engines_used": []
         }
         
         if not self.serpapi_enabled:
@@ -129,54 +130,27 @@ class ReverseSearchService:
             return results
         
         try:
-            logger.info(f"Starting SerpAPI Google Reverse Image Search (image_url provided: {image_url is not None})")
+            logger.info(f"Starting multi-engine reverse image search (image_url provided: {image_url is not None})")
             
-            # Get or create image URL
-            search_image_url = image_url
+            # SerpAPI supports both image_url and image_base64
+            # If we have image_content, we'll use base64 directly (no need for Imgur upload)
+            # Only use image_url if explicitly provided
             
-            if not search_image_url:
-                # Upload to Imgur to get a public URL
-                logger.info("No image URL provided, uploading to Imgur to get public URL...")
-                search_image_url = await self._upload_to_temporary_hosting(image_content)
+            # Perform searches with both Google and Bing using local image content
+            all_similar_images = []
+            engines_checked = []
+            web_search_results = {}
+            
+            # 1. Google Reverse Image Search
+            logger.info("Performing Google Reverse Image Search with local image upload...")
+            google_results = await self._search_with_serpapi(image_content, image_url, engine="google_reverse_image")
+            
+            if not google_results.get("error"):
+                google_matches = google_results.get("matches", [])
+                engines_checked.append("Google")
+                web_search_results["google"] = google_results
                 
-                if not search_image_url:
-                    results["error"] = "Failed to get public image URL for reverse search"
-                    logger.error("Cannot perform reverse search without image URL")
-                    return results
-            
-            logger.info(f"Using image URL for SerpAPI: {search_image_url}")
-            
-            # Verify URL is accessible (quick check)
-            try:
-                import requests
-                import asyncio
-                loop = asyncio.get_event_loop()
-                test_response = await loop.run_in_executor(
-                    None,
-                    lambda: requests.head(search_image_url, timeout=10, allow_redirects=True)
-                )
-                logger.info(f"Image URL accessibility check: status_code={test_response.status_code}, content_type={test_response.headers.get('content-type', 'unknown')}")
-                
-                if test_response.status_code != 200:
-                    logger.warning(f"Image URL returned status {test_response.status_code} - may not be accessible to SerpAPI")
-            except Exception as e:
-                logger.warning(f"Could not verify image URL accessibility: {e}")
-            
-            # Perform SerpAPI search
-            serpapi_results = await self._search_with_serpapi(image_content, search_image_url)
-            
-            if serpapi_results.get("error"):
-                results["error"] = serpapi_results.get("error")
-                logger.error(f"SerpAPI search error: {results['error']}")
-                return results
-            
-            # Parse SerpAPI results
-            images_results = serpapi_results.get("matches", [])
-            
-            if images_results:
-                # Format results to match expected structure
-                similar_images = []
-                for idx, img_result in enumerate(images_results[:limit]):
+                for idx, img_result in enumerate(google_matches[:limit]):
                     match = {
                         "title": img_result.get("title", "Untitled"),
                         "link": img_result.get("link", ""),
@@ -184,23 +158,53 @@ class ReverseSearchService:
                         "thumbnail": img_result.get("thumbnail", ""),
                         "original": img_result.get("original", ""),
                         "snippet": img_result.get("snippet", ""),
-                        "position": idx + 1,
+                        "position": len(all_similar_images) + 1,
                         "match_type": "web_search",
-                        "similarity": 1.0 - (idx * 0.05)  # Decreasing similarity for lower positions
+                        "similarity": 1.0 - (idx * 0.05),
+                        "search_engine": "Google"
                     }
-                    similar_images.append(match)
+                    all_similar_images.append(match)
                 
-                results["similar_images"] = similar_images
-                results["matches_found"] = len(similar_images)
-                results["sources_checked"] = ["Google Reverse Image Search (SerpAPI)"]
-                results["web_search"] = serpapi_results
-                
-                logger.info(f"SerpAPI found {results['matches_found']} matches")
+                logger.info(f"Google found {len(google_matches)} matches")
             else:
-                results["matches_found"] = 0
-                results["sources_checked"] = ["Google Reverse Image Search (SerpAPI)"]
-                results["web_search"] = serpapi_results
-                logger.info("SerpAPI returned no matches")
+                logger.warning(f"Google search error: {google_results.get('error')}")
+            
+            # 2. Bing Reverse Image Search
+            logger.info("Performing Bing Reverse Image Search with local image upload...")
+            bing_results = await self._search_with_serpapi(image_content, image_url, engine="bing_reverse_image")
+            
+            if not bing_results.get("error"):
+                bing_matches = bing_results.get("matches", [])
+                engines_checked.append("Bing")
+                web_search_results["bing"] = bing_results
+                
+                for idx, img_result in enumerate(bing_matches[:limit]):
+                    match = {
+                        "title": img_result.get("title", "Untitled"),
+                        "link": img_result.get("link", ""),
+                        "source": img_result.get("source", ""),
+                        "thumbnail": img_result.get("thumbnail", ""),
+                        "original": img_result.get("original", ""),
+                        "snippet": img_result.get("snippet", ""),
+                        "position": len(all_similar_images) + 1,
+                        "match_type": "web_search",
+                        "similarity": 1.0 - (idx * 0.05),
+                        "search_engine": "Bing"
+                    }
+                    all_similar_images.append(match)
+                
+                logger.info(f"Bing found {len(bing_matches)} matches")
+            else:
+                logger.warning(f"Bing search error: {bing_results.get('error')}")
+            
+            # Combine and sort results
+            results["similar_images"] = all_similar_images
+            results["matches_found"] = len(all_similar_images)
+            results["sources_checked"] = [f"{engine} Reverse Image Search (SerpAPI)" for engine in engines_checked]
+            results["engines_used"] = engines_checked
+            results["web_search"] = web_search_results
+            
+            logger.info(f"Total matches found: {results['matches_found']} (Google: {len(google_results.get('matches', []))}, Bing: {len(bing_results.get('matches', []))})")
             
         except Exception as e:
             logger.error(f"Error in reverse image search: {e}", exc_info=True)
@@ -314,13 +318,14 @@ class ReverseSearchService:
         
         return None
 
-    async def _search_with_serpapi(self, image_content: bytes, image_url: Optional[str] = None) -> Dict[str, Any]:
+    async def _search_with_serpapi(self, image_content: bytes, image_url: Optional[str] = None, engine: str = "google_reverse_image") -> Dict[str, Any]:
         """
-        Search for image using SerpAPI Google Reverse Image Search
+        Search for image using SerpAPI Reverse Image Search
         
         Args:
             image_content: Raw image bytes
             image_url: Optional URL to the image (if not provided, will try to create one)
+            engine: Search engine to use ("google_reverse_image" or "bing_reverse_image")
         
         Returns:
             Dictionary containing SerpAPI search results
@@ -337,29 +342,55 @@ class ReverseSearchService:
             return results
         
         try:
+            # SerpAPI reverse image search requires image_url parameter
+            # If no URL provided, we need to upload to temporary hosting first
+            # Then use that URL for the search
+            
+            import asyncio
+            import base64
+            loop = asyncio.get_event_loop()
+            
             # Determine image URL to use
             search_image_url = image_url
             
             if not search_image_url:
-                # SerpAPI requires a publicly accessible URL, not a data URL
-                # Data URLs don't work with Google Reverse Image Search
-                # For now, we need the user to provide a public URL or we need to upload to a service
-                logger.warning("SerpAPI requires a public image URL. Data URLs are not supported by Google Reverse Image Search.")
-                logger.warning("Consider uploading image to a public hosting service (Imgur, etc.) or providing image_url parameter")
+                # No URL provided - need to upload image to get a public URL
+                # SerpAPI doesn't directly accept base64, so we upload to Imgur first
+                logger.info(f"No image URL provided for {engine}, uploading to Imgur to get public URL...")
                 
-                # Try temporary hosting (not implemented yet - would need Imgur API or similar)
+                if not image_content or len(image_content) == 0:
+                    results["error"] = "No image content provided and no image URL available"
+                    logger.error("Cannot perform search: no image content or URL")
+                    return results
+                
                 search_image_url = await self._upload_to_temporary_hosting(image_content)
                 
                 if not search_image_url:
-                    results["error"] = "SerpAPI requires a publicly accessible image URL. Data URLs are not supported. Please provide image_url parameter or implement image hosting upload."
-                    logger.error("Cannot perform SerpAPI search: no public image URL available")
+                    results["error"] = "Failed to upload image to temporary hosting. Cannot perform reverse search without a public image URL."
+                    logger.error("Cannot perform SerpAPI search: failed to get public image URL")
                     return results
+                
+                logger.info(f"Successfully uploaded image to Imgur: {search_image_url}")
             
-            logger.info(f"Performing SerpAPI Google Reverse Image Search with URL: {search_image_url}")
+            # Verify URL is accessible
+            try:
+                import requests
+                test_response = await loop.run_in_executor(
+                    None,
+                    lambda: requests.head(search_image_url, timeout=10, allow_redirects=True)
+                )
+                logger.info(f"Image URL accessibility check: status_code={test_response.status_code}")
+                
+                if test_response.status_code != 200:
+                    logger.warning(f"Image URL returned status {test_response.status_code} - may not be accessible to SerpAPI")
+            except Exception as e:
+                logger.warning(f"Could not verify image URL accessibility: {e}")
             
-            # Prepare SerpAPI parameters - exactly as in user's example
+            # Use image URL for SerpAPI search
+            logger.info(f"Using image URL for {engine}: {search_image_url[:100]}...")
+            
             params = {
-                "engine": "google_reverse_image",
+                "engine": engine,
                 "image_url": search_image_url,
                 "api_key": SERPAPI_API_KEY
             }
@@ -367,12 +398,40 @@ class ReverseSearchService:
             logger.info(f"SerpAPI params: engine={params['engine']}, image_url={params['image_url'][:100]}..., api_key={'*' * 20}")
             
             # Execute search (SerpAPI is synchronous, so we run it in executor)
-            import asyncio
-            loop = asyncio.get_event_loop()
             search = GoogleSearch(params)
-            
-            # Run the blocking API call in executor to avoid blocking
             raw_results = await loop.run_in_executor(None, search.get_dict)
+            
+            # Check if SerpAPI did a text search instead of image search
+            # This happens when SerpAPI/Google extracts text from image via OCR and searches for that text
+            search_info = raw_results.get("search_information", {})
+            organic_state = search_info.get("organic_results_state", "")
+            
+            # Check if we got image_results (Google) or related_content (Bing)
+            if engine == "bing_reverse_image":
+                has_results = "related_content" in raw_results
+            else:
+                has_results = "image_results" in raw_results or "images_results" in raw_results
+            
+            # Check if organic_results_state indicates text search
+            is_text_search = ("exact spelling" in organic_state.lower() or 
+                            "text" in organic_state.lower())
+            
+            # Check for error in response
+            if "error" in raw_results:
+                error_msg = raw_results.get("error", "")
+                logger.error(f"SerpAPI returned error: {error_msg}")
+                results["error"] = error_msg
+                
+                # If error is about missing image_url, something went wrong with our upload
+                if "image_url" in error_msg.lower():
+                    logger.error("SerpAPI didn't receive image_url parameter - upload may have failed")
+                    results["error"] = f"Failed to provide image URL to SerpAPI: {error_msg}"
+                    return results
+            
+            # Check if text search was performed instead of image search
+            if is_text_search and not has_results:
+                logger.warning(f"SerpAPI performed text search instead of image search (state: {organic_state})")
+                logger.warning("This usually means the search engine OCR'd the image and searched for extracted text")
             
             logger.info(f"SerpAPI search completed. Response keys: {list(raw_results.keys())}")
             
@@ -387,19 +446,37 @@ class ReverseSearchService:
             
             logger.info(f"Full SerpAPI response (first 2000 chars): {json.dumps(raw_results, indent=2)[:2000]}...")
             
-            # Parse results - check both possible field names (SerpAPI uses "image_results" not "images_results")
-            images_results = raw_results.get("image_results", [])  # Correct field name (singular)
+            # Parse results - different engines use different field names
+            images_results = []
             
-            # Fallback to plural if singular doesn't exist (for backwards compatibility)
-            if not images_results:
-                images_results = raw_results.get("images_results", [])
+            if engine == "bing_reverse_image":
+                # Bing uses "related_content" field (as per SerpAPI Bing Reverse Image Search format)
+                images_results = raw_results.get("related_content", [])
+                logger.info(f"Bing related_content found: {len(images_results) if isinstance(images_results, list) else 'not a list'}")
+                
+                if not isinstance(images_results, list):
+                    logger.warning(f"Bing related_content is not a list: {type(images_results)}")
+                    images_results = []
+            else:
+                # Google uses "image_results" or "images_results"
+                images_results = raw_results.get("image_results", [])  # Correct field name (singular)
+                
+                # Fallback to plural if singular doesn't exist (for backwards compatibility)
+                if not images_results:
+                    images_results = raw_results.get("images_results", [])
             
             logger.info(f"SerpAPI returned {len(images_results)} image results")
             logger.info(f"Checking for 'image_results' and 'images_results' - found: image_results={len(raw_results.get('image_results', []))}, images_results={len(raw_results.get('images_results', []))}")
             
             # Check if SerpAPI did a text search instead of image search
-            if "image_results" not in raw_results and "images_results" not in raw_results:
-                logger.warning(f"SerpAPI response missing both 'image_results' and 'images_results' fields. Available fields: {list(raw_results.keys())}")
+            # For Bing, check for "related_content", for Google check for "image_results" or "images_results"
+            if engine == "bing_reverse_image":
+                has_results = "related_content" in raw_results and len(images_results) > 0
+            else:
+                has_results = ("image_results" in raw_results or "images_results" in raw_results) and len(images_results) > 0
+            
+            if not has_results:
+                logger.warning(f"SerpAPI response missing expected result fields. Available fields: {list(raw_results.keys())}")
                 if "error" in raw_results:
                     logger.error(f"SerpAPI error in response: {raw_results['error']}")
                 # Check if it did a text search instead
@@ -434,17 +511,33 @@ class ReverseSearchService:
                 for idx, img_result in enumerate(images_results[:20]):  # Limit to 20 results
                     # Handle both dict and different structure formats
                     if isinstance(img_result, dict):
-                        match = {
-                            "title": img_result.get("title", img_result.get("name", "Untitled")),
-                            "link": img_result.get("link", img_result.get("url", "")),
-                            "source": img_result.get("source", img_result.get("source_name", "")),
-                            "thumbnail": img_result.get("thumbnail", img_result.get("thumbnail_url", "")),
-                            "original": img_result.get("original", img_result.get("original_url", "")),
-                            "snippet": img_result.get("snippet", img_result.get("description", "")),
-                            "position": idx + 1,
-                            "match_type": "web_search",
-                            "similarity": 1.0 - (idx * 0.05)  # Decreasing similarity for lower positions
-                        }
+                        # Bing and Google have slightly different field names
+                        if engine == "bing_reverse_image":
+                            match = {
+                                "title": img_result.get("title", img_result.get("name", "Untitled")),
+                                "link": img_result.get("link", img_result.get("url", img_result.get("href", ""))),
+                                "source": img_result.get("source", img_result.get("source_name", img_result.get("domain", ""))),
+                                "thumbnail": img_result.get("thumbnail", img_result.get("thumbnail_url", img_result.get("image", ""))),
+                                "original": img_result.get("original", img_result.get("original_url", img_result.get("image", ""))),
+                                "snippet": img_result.get("snippet", img_result.get("description", img_result.get("text", ""))),
+                                "position": idx + 1,
+                                "match_type": "web_search",
+                                "similarity": 1.0 - (idx * 0.05),
+                                "search_engine": "Bing"
+                            }
+                        else:
+                            match = {
+                                "title": img_result.get("title", img_result.get("name", "Untitled")),
+                                "link": img_result.get("link", img_result.get("url", "")),
+                                "source": img_result.get("source", img_result.get("source_name", "")),
+                                "thumbnail": img_result.get("thumbnail", img_result.get("thumbnail_url", "")),
+                                "original": img_result.get("original", img_result.get("original_url", "")),
+                                "snippet": img_result.get("snippet", img_result.get("description", "")),
+                                "position": idx + 1,
+                                "match_type": "web_search",
+                                "similarity": 1.0 - (idx * 0.05),
+                                "search_engine": "Google"
+                            }
                     else:
                         logger.warning(f"Unexpected image result format: {type(img_result)} - {str(img_result)[:200]}")
                         continue
