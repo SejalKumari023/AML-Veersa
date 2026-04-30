@@ -6,7 +6,7 @@ import logging
 import json
 from datetime import datetime
 from app.routes.data_routes import Transaction
-from app.agents.rule_parser import rule_to_code_agent
+from app.agents.rule_parser import build_rule_parser_graph, RuleParserState
 from fastapi import Request
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,9 @@ class RuleInput(BaseModel):
 async def post_rule(rule_input: RuleInput):
     """Create new rule from text input (accepts large text via JSON body)"""
     try:
-        result = rule_to_code_agent(rule_input.rule)
+        graph = build_rule_parser_graph()
+        state = RuleParserState(**{"rule_text": rule_input.rule})
+        result = graph.invoke(state)
         print("Rule to code result:", result)
         return {"result": result}
     except Exception as e:
