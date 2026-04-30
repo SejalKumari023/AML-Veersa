@@ -195,6 +195,95 @@ class PostgresDatabase:
             )
             logger.info("Rules table created/verified")
 
+            # Create transactions table
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS transactions (
+                    transaction_id TEXT PRIMARY KEY,
+                    booking_jurisdiction TEXT,
+                    regulator TEXT,
+                    booking_datetime TIMESTAMP,
+                    value_date TIMESTAMP,
+                    amount DECIMAL(15, 2) NOT NULL,
+                    currency TEXT NOT NULL,
+                    channel TEXT,
+                    product_type TEXT,
+                    originator_name TEXT,
+                    originator_account TEXT,
+                    originator_country TEXT,
+                    beneficiary_name TEXT,
+                    beneficiary_account TEXT,
+                    beneficiary_country TEXT,
+                    swift_mt TEXT,
+                    ordering_institution_bic TEXT,
+                    beneficiary_institution_bic TEXT,
+                    swift_f50_present BOOLEAN,
+                    swift_f59_present BOOLEAN,
+                    swift_f70_purpose TEXT,
+                    swift_f71_charges TEXT,
+                    travel_rule_complete BOOLEAN,
+                    fx_indicator BOOLEAN,
+                    fx_base_ccy TEXT,
+                    fx_quote_ccy TEXT,
+                    fx_applied_rate DECIMAL(15, 6),
+                    fx_market_rate DECIMAL(15, 6),
+                    fx_spread_bps DECIMAL(10, 2),
+                    fx_counterparty TEXT,
+                    customer_id TEXT NOT NULL,
+                    customer_type TEXT,
+                    customer_risk_rating TEXT,
+                    customer_is_pep BOOLEAN,
+                    kyc_last_completed TIMESTAMP,
+                    kyc_due_date TIMESTAMP,
+                    edd_required BOOLEAN,
+                    edd_performed BOOLEAN,
+                    sow_documented BOOLEAN,
+                    purpose_code TEXT,
+                    narrative TEXT,
+                    is_advised BOOLEAN,
+                    product_complex BOOLEAN,
+                    client_risk_profile TEXT,
+                    suitability_assessed BOOLEAN,
+                    suitability_result TEXT,
+                    product_has_va_exposure BOOLEAN,
+                    va_disclosure_provided BOOLEAN,
+                    cash_id_verified BOOLEAN,
+                    daily_cash_total_customer DECIMAL(15, 2),
+                    daily_cash_txn_count INTEGER,
+                    sanctions_screening TEXT,
+                    suspicion_determined_datetime TIMESTAMP,
+                    str_filed_datetime TIMESTAMP,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'pending',
+                    risk_score DECIMAL(5, 2),
+                    flags TEXT[],
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            logger.info("Transactions table created/verified")
+
+            # Create alerts table
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id TEXT PRIMARY KEY,
+                    transaction_id TEXT NOT NULL,
+                    alert_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    status TEXT DEFAULT 'active',
+                    assigned_to TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id)
+                )
+                """
+            )
+            logger.info("Alerts table created/verified")
+
     @classmethod
     async def close(cls):
         """Close database connection pool"""
@@ -345,3 +434,188 @@ class PostgresDatabase:
                 rule_id,
             )
             return result == "DELETE 1"
+
+    # Transaction methods
+    @classmethod
+    async def insert_transaction(cls, transaction_data: Dict[str, Any]) -> str:
+        """Insert a new transaction into the database"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            # Build the INSERT query dynamically based on provided fields
+            columns = list(transaction_data.keys())
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [transaction_data[col] for col in columns]
+            query = f"""
+                INSERT INTO transactions ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                ON CONFLICT (transaction_id) DO UPDATE SET
+                    {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col != 'transaction_id'])},
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING transaction_id
+            """
+
+            row = await conn.fetchrow(query, *values)
+            logger.info(f"Transaction inserted/updated: {row['transaction_id']}")
+            return row["transaction_id"]
+
+    @classmethod
+    async def get_transaction(cls, transaction_id: str) -> Optional[Dict[str, Any]]:
+        """Get a transaction by ID"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM transactions WHERE transaction_id = $1",
+                transaction_id,
+            )
+            if row:
+                return dict(row)
+            return None
+
+    @classmethod
+    async def get_all_transactions(
+        cls, limit: int = 1000, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get all transactions with pagination"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM transactions
+                ORDER BY timestamp DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+            return [dict(row) for row in rows]
+
+    @classmethod
+    async def delete_transaction(cls, transaction_id: str) -> bool:
+        """Delete a transaction by ID"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM transactions WHERE transaction_id = $1",
+                transaction_id,
+            )
+            return result == "DELETE 1"
+
+    # Alert methods
+    @classmethod
+    async def insert_alert(cls, alert_data: Dict[str, Any]) -> str:
+        """Insert a new alert into the database"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            columns = list(alert_data.keys())
+            placeholders = [f"${i+1}" for i in range(len(columns))]
+            values = [alert_data[col] for col in columns]
+
+            query = f"""
+                INSERT INTO alerts ({', '.join(columns)})
+                VALUES ({', '.join(placeholders)})
+                RETURNING id
+            """
+
+            row = await conn.fetchrow(query, *values)
+            logger.info(f"Alert inserted: {row['id']}")
+            return row["id"]
+
+    @classmethod
+    async def get_alert(cls, alert_id: str) -> Optional[Dict[str, Any]]:
+        """Get an alert by ID"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM alerts WHERE id = $1",
+                alert_id,
+            )
+            if row:
+                return dict(row)
+            return None
+
+    @classmethod
+    async def get_all_alerts(
+        cls, limit: int = 1000, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get all alerts with pagination"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM alerts
+                ORDER BY timestamp DESC
+                LIMIT $1 OFFSET $2
+                """,
+                limit,
+                offset,
+            )
+            return [dict(row) for row in rows]
+
+    @classmethod
+    async def delete_alert(cls, alert_id: str) -> bool:
+        """Delete an alert by ID"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM alerts WHERE id = $1",
+                alert_id,
+            )
+            return result == "DELETE 1"
+
+    @classmethod
+    async def get_risk_summary(cls) -> Dict[str, Any]:
+        """Get risk analytics summary"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        async with cls.pool.acquire() as conn:
+            # Get transaction counts by risk level
+            total_transactions = await conn.fetchval(
+                "SELECT COUNT(*) FROM transactions"
+            )
+
+            high_risk = await conn.fetchval(
+                "SELECT COUNT(*) FROM transactions WHERE risk_score >= 70"
+            )
+
+            medium_risk = await conn.fetchval(
+                "SELECT COUNT(*) FROM transactions WHERE risk_score >= 40 AND risk_score < 70"
+            )
+
+            low_risk = await conn.fetchval(
+                "SELECT COUNT(*) FROM transactions WHERE risk_score < 40"
+            )
+
+            # Get alert counts by status
+            active_alerts = await conn.fetchval(
+                "SELECT COUNT(*) FROM alerts WHERE status = 'active'"
+            )
+
+            resolved_alerts = await conn.fetchval(
+                "SELECT COUNT(*) FROM alerts WHERE status = 'resolved'"
+            )
+
+            return {
+                "total_transactions": total_transactions or 0,
+                "high_risk_transactions": high_risk or 0,
+                "medium_risk_transactions": medium_risk or 0,
+                "low_risk_transactions": low_risk or 0,
+                "active_alerts": active_alerts or 0,
+                "resolved_alerts": resolved_alerts or 0,
+            }

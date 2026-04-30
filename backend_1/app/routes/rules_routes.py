@@ -2,23 +2,16 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.database.connection import Database, PostgresDatabase
+from app.models import Transaction, RuleInput
+from app.agents.rule_parser import build_rule_parser_graph, RuleParserState
 import logging
 import json
 from datetime import datetime
-from app.routes.data_routes import Transaction
-from app.agents.rule_parser import build_rule_parser_graph, RuleParserState
 from fastapi import Request
 
 logger = logging.getLogger(__name__)
 
 rule_router = APIRouter()
-
-
-class RuleInput(BaseModel):
-    rule: str
-    rule_id: Optional[str] = (
-        None  # Optional regulatory identifier like "MAS-Notice-626"
-    )
 
 
 @rule_router.post("/")

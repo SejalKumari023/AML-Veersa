@@ -9,6 +9,8 @@ asyncpg==0.29.0 \
     --hash=sha256:00ff2c50a6068fb5fff43aaa1e5e0e8b0d0a0e8e4cb5a5fd7938c8c0c0c8a1a2 \
     --hash=sha256:11a114c3b9104bfd6f82a90c61e33c83b6cb4b5e8e2c4f5b5f5e5f5e5f5e5f5e
     # via backend-1
+polars==1.15.0
+    # via backend-1
 annotated-types==0.7.0 \
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
