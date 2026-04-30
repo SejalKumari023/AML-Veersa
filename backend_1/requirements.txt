@@ -4,6 +4,11 @@ annotated-doc==0.0.3 \
     --hash=sha256:348ec6664a76f1fd3be81f43dffbee4c7e8ce931ba71ec67cc7f4ade7fbbb580 \
     --hash=sha256:e18370014c70187422c33e945053ff4c286f453a984eba84d0dbfa0c935adeda
     # via fastapi
+asyncpg==0.29.0 \
+    --hash=sha256:0009a300cae37b8c525e5b449233d59cd9868fd35431abc470a3e364d2b4e011 \
+    --hash=sha256:00ff2c50a6068fb5fff43aaa1e5e0e8b0d0a0e8e4cb5a5fd7938c8c0c0c8a1a2 \
+    --hash=sha256:11a114c3b9104bfd6f82a90c61e33c83b6cb4b5e8e2c4f5b5f5e5f5e5f5e5f5e
+    # via backend-1
 annotated-types==0.7.0 \
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
