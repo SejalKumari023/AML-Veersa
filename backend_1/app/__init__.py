@@ -1,14 +1,41 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_CONFIG, MAX_CONTENT_LENGTH
-from app.database.connection import Database
+from app.database.connection import Database, PostgresDatabase
 from app.routes.data_routes import data_router
 from app.routes.user_routes import user_router
 from app.routes.rules_routes import rule_router
 from app.utils.logging_config import setup_logging
 
 logger = setup_logging()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle"""
+    # Startup: Initialize PostgreSQL database connection pool
+    logger.info("Initializing PostgreSQL database connection pool...")
+    try:
+        await PostgresDatabase.initialize()
+        logger.info("PostgreSQL database connection pool initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize PostgreSQL: {e}")
+        logger.warning("Running without PostgreSQL - rules will not be persisted")
+
+    # Initialize in-memory database for legacy support
+    Database.initialize()
+
+    yield
+
+    # Shutdown: Close PostgreSQL connection pool
+    logger.info("Closing PostgreSQL database connection pool...")
+    try:
+        await PostgresDatabase.close()
+        logger.info("PostgreSQL database connection pool closed")
+    except Exception as e:
+        logger.warning(f"Error closing PostgreSQL pool: {e}")
 
 
 def create_app() -> FastAPI:
@@ -20,6 +47,7 @@ def create_app() -> FastAPI:
         version="1.0.0",
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     # Configure CORS
@@ -30,9 +58,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Initialize database connection
-    Database.initialize()
 
     # Include routers
     app.include_router(user_router, prefix="/api/users", tags=["users"])

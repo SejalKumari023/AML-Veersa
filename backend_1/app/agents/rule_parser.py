@@ -125,8 +125,8 @@ def rule_to_code_agent(state: RuleParserState) -> Dict[str, Any]:
     # Initialize LangChain chat model with structured output
     llm = ChatOpenAI(
         model=MODEL,
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url=os.getenv("OPENROUTER_API_BASE"),
+        api_key=os.getenv("GROQ_API_KEY"),
+        base_url=os.getenv("GROQ_API_BASE"),
         temperature=0.7,
     )
 
@@ -195,8 +195,8 @@ def test_rule_on_transaction(state: RuleParserState) -> Dict[str, Any]:
     # use llm to create a sample transaction that would trigger the rule
     llm = ChatOpenAI(
         model=MODEL,
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url=os.getenv("OPENROUTER_API_BASE"),
+        api_key=os.getenv("GROQ_API_KEY"),
+        base_url=os.getenv("GROQ_API_BASE"),
         temperature=0.7,
     )
     structured_llm = llm.with_structured_output(RuleTestCase)
@@ -298,8 +298,8 @@ def refine_rule_code(state: RuleParserState) -> Dict[str, Any]:
     """
     llm = ChatOpenAI(
         model=MODEL,
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        base_url=os.getenv("OPENROUTER_API_BASE"),
+        api_key=os.getenv("GROQ_API_KEY"),
+        base_url=os.getenv("GROQ_API_BASE"),
         temperature=0.7,
     )
 
