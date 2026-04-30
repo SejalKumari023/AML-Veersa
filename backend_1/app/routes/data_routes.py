@@ -35,6 +35,67 @@ async def create_transaction(transaction: Transaction):
     """Create a new transaction"""
     try:
         transaction_dict = transaction.dict()
+
+        # Check if customer exists, create if not
+        if transaction.customer_id:
+            customer = await PostgresDatabase.get_customer(transaction.customer_id)
+            if not customer:
+                # Create customer from transaction data
+                customer_data = {
+                    "id": str(uuid.uuid4()),
+                    "customer_id": transaction.customer_id,
+                    "customer_type": transaction.customer_type or "individual",
+                    "customer_risk_rating": transaction.customer_risk_rating or "Low",
+                    "customer_is_pep": transaction.customer_is_pep or False,
+                    "kyc_last_completed": transaction.kyc_last_completed,
+                    "kyc_due_date": transaction.kyc_due_date,
+                    "edd_required": transaction.edd_required or False,
+                    "edd_performed": transaction.edd_performed or False,
+                    "sow_documented": transaction.sow_documented or False,
+                    "client_risk_profile": transaction.client_risk_profile
+                    or "Balanced",
+                }
+                await PostgresDatabase.insert_customer(customer_data)
+                logger.info(
+                    f"Created customer {transaction.customer_id} from transaction"
+                )
+
+            # Check and create originator account if needed
+            if transaction.originator_account and transaction.originator_name:
+                originator_account = await PostgresDatabase.get_account(
+                    transaction.originator_account
+                )
+                if not originator_account:
+                    originator_account_data = {
+                        "id": str(uuid.uuid4()),
+                        "account_number": transaction.originator_account,
+                        "customer_id": transaction.customer_id,
+                        "name": transaction.originator_name,
+                        "country": transaction.originator_country or "Unknown",
+                    }
+                    await PostgresDatabase.insert_account(originator_account_data)
+                    logger.info(
+                        f"Created originator account {transaction.originator_account} from transaction"
+                    )
+
+            # Check and create beneficiary account if needed
+            if transaction.beneficiary_account and transaction.beneficiary_name:
+                beneficiary_account = await PostgresDatabase.get_account(
+                    transaction.beneficiary_account
+                )
+                if not beneficiary_account:
+                    beneficiary_account_data = {
+                        "id": str(uuid.uuid4()),
+                        "account_number": transaction.beneficiary_account,
+                        "customer_id": transaction.customer_id,
+                        "name": transaction.beneficiary_name,
+                        "country": transaction.beneficiary_country or "Unknown",
+                    }
+                    await PostgresDatabase.insert_account(beneficiary_account_data)
+                    logger.info(
+                        f"Created beneficiary account {transaction.beneficiary_account} from transaction"
+                    )
+
         transaction_id = await PostgresDatabase.insert_transaction(transaction_dict)
         return transaction
     except Exception as e:
@@ -168,6 +229,85 @@ async def upload_transactions(file: UploadFile = File(...)):
                         f"Validation failed for transaction: {validation_error}"
                     )
                     continue
+
+                # Check if customer exists, create if not
+                if validated_transaction.customer_id:
+                    customer = await PostgresDatabase.get_customer(
+                        validated_transaction.customer_id
+                    )
+                    if not customer:
+                        # Create customer from transaction data
+                        customer_data = {
+                            "id": str(uuid.uuid4()),
+                            "customer_id": validated_transaction.customer_id,
+                            "customer_type": validated_transaction.customer_type
+                            or "individual",
+                            "customer_risk_rating": validated_transaction.customer_risk_rating
+                            or "Low",
+                            "customer_is_pep": validated_transaction.customer_is_pep
+                            or False,
+                            "kyc_last_completed": validated_transaction.kyc_last_completed,
+                            "kyc_due_date": validated_transaction.kyc_due_date,
+                            "edd_required": validated_transaction.edd_required or False,
+                            "edd_performed": validated_transaction.edd_performed
+                            or False,
+                            "sow_documented": validated_transaction.sow_documented
+                            or False,
+                            "client_risk_profile": validated_transaction.client_risk_profile
+                            or "Balanced",
+                        }
+                        await PostgresDatabase.insert_customer(customer_data)
+                        logger.info(
+                            f"Created customer {validated_transaction.customer_id} from transaction upload"
+                        )
+
+                    # Check and create originator account if needed
+                    if (
+                        validated_transaction.originator_account
+                        and validated_transaction.originator_name
+                    ):
+                        originator_account = await PostgresDatabase.get_account(
+                            validated_transaction.originator_account
+                        )
+                        if not originator_account:
+                            originator_account_data = {
+                                "id": str(uuid.uuid4()),
+                                "account_number": validated_transaction.originator_account,
+                                "customer_id": validated_transaction.customer_id,
+                                "name": validated_transaction.originator_name,
+                                "country": validated_transaction.originator_country
+                                or "Unknown",
+                            }
+                            await PostgresDatabase.insert_account(
+                                originator_account_data
+                            )
+                            logger.info(
+                                f"Created originator account {validated_transaction.originator_account} from transaction upload"
+                            )
+
+                    # Check and create beneficiary account if needed
+                    if (
+                        validated_transaction.beneficiary_account
+                        and validated_transaction.beneficiary_name
+                    ):
+                        beneficiary_account = await PostgresDatabase.get_account(
+                            validated_transaction.beneficiary_account
+                        )
+                        if not beneficiary_account:
+                            beneficiary_account_data = {
+                                "id": str(uuid.uuid4()),
+                                "account_number": validated_transaction.beneficiary_account,
+                                "customer_id": validated_transaction.customer_id,
+                                "name": validated_transaction.beneficiary_name,
+                                "country": validated_transaction.beneficiary_country
+                                or "Unknown",
+                            }
+                            await PostgresDatabase.insert_account(
+                                beneficiary_account_data
+                            )
+                            logger.info(
+                                f"Created beneficiary account {validated_transaction.beneficiary_account} from transaction upload"
+                            )
 
                 # Insert validated transaction
                 transaction_dict = validated_transaction.dict()
