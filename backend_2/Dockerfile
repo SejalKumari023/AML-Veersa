@@ -5,6 +5,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y libgl1 libglib2.0-0 libsm6 && rm -rf /var/lib/apt/lists/*
+
 # Copy dependency definition files first to leverage Docker cache.
 # This copies the most common files. Adjust this line if you use different file names.
 COPY pyproject.toml* requirements.lock* requirements.txt* uv.lock* ./

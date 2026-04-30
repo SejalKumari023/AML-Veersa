@@ -1,13 +1,13 @@
 services:
-    nginx:
-        build: ./nginx
-        ports:
-            - "80:80"
-        depends_on:
-            - frontend
-            - backend_1
-            # - backend_2
-        restart: always
+    # nginx:
+    #     build: ./nginx
+    #     ports:
+    #         - "80:80"
+    #     depends_on:
+    #         - frontend
+    #         - backend_1
+    #         # - backend_2
+    #     restart: always
 
     backend_1:
         build: ./backend_1
@@ -61,8 +61,8 @@ services:
         environment:
             - WATCHPACK_POLLING=true
             - WDS_SOCKET_PORT=0
-            - NEXT_PUBLIC_API_URL=/api
-            - NEXT_PUBLIC_LLM_API_URL=/llm-api
+            - NEXT_PUBLIC_API_URL=http://localhost:5001/api
+            - NEXT_PUBLIC_LLM_API_URL=http://localhost:5002/llm-api
         volumes:
             - ./frontend:/app
             - /app/node_modules
