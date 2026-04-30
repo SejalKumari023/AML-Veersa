@@ -2,22 +2,13 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from app.database.connection import Database
+from app.models import User, UserCreate
 import logging
 
 logger = logging.getLogger(__name__)
 
 user_router = APIRouter()
 
-class User(BaseModel):
-    id: Optional[str] = None
-    username: str
-    email: str
-    role: str = "user"
-
-class UserCreate(BaseModel):
-    username: str
-    email: str
-    role: str = "user"
 
 @user_router.get("/", response_model=List[User])
 async def get_users():
@@ -35,6 +26,7 @@ async def get_users():
         logger.error(f"Error fetching users: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
 @user_router.post("/", response_model=User)
 async def create_user(user: UserCreate):
     """Create a new user"""
@@ -47,6 +39,7 @@ async def create_user(user: UserCreate):
     except Exception as e:
         logger.error(f"Error creating user: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
 
 @user_router.get("/{user_id}", response_model=User)
 async def get_user(user_id: str):

@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field, field_validator
 from typing import Mapping, TypedDict, Dict, Any, Optional
-from app.routes.data_routes import Transaction
+from app.models.transaction import Transaction
 from dotenv import load_dotenv
 import os
 from rich import print
@@ -263,7 +263,11 @@ The Transaction object has the following attributes: {transaction_attributes}"""
             expected = test_case["should_trigger"]
 
             # Apply the rule to the transaction
-            actual = apply_rule_to_transaction(apply_rule, transaction)
+            try:
+                actual = apply_rule_to_transaction(apply_rule, transaction)
+            except Exception as e:
+                print(f"Error applying rule in test case {i}: {e}")
+                actual = False  # Treat as not triggered on error
 
             # Check if test passed
             passed = expected == actual

@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.database.connection import Database, PostgresDatabase
+from app.agents.rule_parser import parse_function_code, apply_rule_to_transaction
+from app.models import Transaction, Alert
 import logging
 import json
 from datetime import datetime
@@ -12,78 +14,6 @@ from io import BytesIO
 logger = logging.getLogger(__name__)
 
 data_router = APIRouter()
-
-
-class Transaction(BaseModel):
-    transaction_id: str
-    booking_jurisdiction: str
-    regulator: Optional[str] = None
-    booking_datetime: Optional[datetime] = None
-    value_date: Optional[datetime] = None
-    amount: float
-    currency: str
-    channel: Optional[str] = None
-    product_type: Optional[str] = None
-    originator_name: Optional[str] = None
-    originator_account: Optional[str] = None
-    originator_country: Optional[str] = None
-    beneficiary_name: Optional[str] = None
-    beneficiary_account: Optional[str] = None
-    beneficiary_country: Optional[str] = None
-    swift_mt: Optional[str] = None
-    ordering_institution_bic: Optional[str] = None
-    beneficiary_institution_bic: Optional[str] = None
-    swift_f50_present: Optional[bool] = None
-    swift_f59_present: Optional[bool] = None
-    swift_f70_purpose: Optional[str] = None
-    swift_f71_charges: Optional[str] = None
-    travel_rule_complete: Optional[bool] = None
-    fx_indicator: Optional[bool] = None
-    fx_base_ccy: Optional[str] = None
-    fx_quote_ccy: Optional[str] = None
-    fx_applied_rate: Optional[float] = None
-    fx_market_rate: Optional[float] = None
-    fx_spread_bps: Optional[float] = None
-    fx_counterparty: Optional[str] = None
-    customer_id: str
-    customer_type: Optional[str] = None
-    customer_risk_rating: Optional[str] = None
-    customer_is_pep: Optional[bool] = None
-    kyc_last_completed: Optional[datetime] = None
-    kyc_due_date: Optional[datetime] = None
-    edd_required: Optional[bool] = None
-    edd_performed: Optional[bool] = None
-    sow_documented: Optional[bool] = None
-    purpose_code: Optional[str] = None
-    narrative: Optional[str] = None
-    is_advised: Optional[bool] = None
-    product_complex: Optional[bool] = None
-    client_risk_profile: Optional[str] = None
-    suitability_assessed: Optional[bool] = None
-    suitability_result: Optional[str] = None
-    product_has_va_exposure: Optional[bool] = None
-    va_disclosure_provided: Optional[bool] = None
-    cash_id_verified: Optional[bool] = None
-    daily_cash_total_customer: Optional[float] = None
-    daily_cash_txn_count: Optional[int] = None
-    sanctions_screening: Optional[str] = None
-    suspicion_determined_datetime: Optional[datetime] = None
-    str_filed_datetime: Optional[datetime] = None
-    timestamp: datetime
-    status: str = "pending"
-    risk_score: Optional[float] = None
-    flags: List[str] = []
-
-
-class Alert(BaseModel):
-    id: Optional[str] = None
-    transaction_id: str
-    alert_type: str
-    severity: str
-    message: str
-    timestamp: datetime
-    status: str = "active"
-    assigned_to: Optional[str] = None
 
 
 @data_router.get("/transactions", response_model=List[Transaction])
@@ -286,4 +216,271 @@ async def get_risk_summary():
         return summary
     except Exception as e:
         logger.error(f"Error fetching risk summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@data_router.get("/analytics/run-rules")
+async def run_rules_on_transactions(
+    rule_id: Optional[str] = None,
+    transaction_id: Optional[str] = None,
+    limit: Optional[int] = 10000,
+):
+    """
+    Run all active rules against all transactions and generate alerts.
+
+    Query parameters:
+    - rule_id: Optional - Run only a specific rule
+    - transaction_id: Optional - Run rules only against a specific transaction
+    - limit: Optional - Limit number of transactions to process (default: 10000)
+    """
+    try:
+        # Fetch rules from database
+        if rule_id:
+            rule = await PostgresDatabase.get_rule(rule_id)
+            if not rule:
+                raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+            rules = [rule]
+        else:
+            rules = await PostgresDatabase.get_all_rules()
+
+        if not rules:
+            return {
+                "message": "No rules found in database",
+                "rules_processed": 0,
+                "transactions_processed": 0,
+                "alerts_created": 0,
+            }
+
+        # Fetch transactions from database
+        if transaction_id:
+            transaction_data = await PostgresDatabase.get_transaction(transaction_id)
+            if not transaction_data:
+                raise HTTPException(
+                    status_code=404, detail=f"Transaction {transaction_id} not found"
+                )
+            transactions_data = [transaction_data]
+        else:
+            transactions_data = await PostgresDatabase.get_all_transactions(
+                limit=limit or 10000, offset=0
+            )
+
+        if not transactions_data:
+            return {
+                "message": "No transactions found in database",
+                "rules_processed": 0,
+                "transactions_processed": 0,
+                "alerts_created": 0,
+            }
+
+        # Convert transaction data to Transaction objects
+        transactions = [Transaction(**txn) for txn in transactions_data]
+
+        # Process each rule
+        alerts_created = 0
+        rules_processed = 0
+        errors = []
+        triggered_rules = []
+
+        for rule in rules:
+            try:
+                rule_id_current = rule["id"]
+                function_code = rule["function_code"]
+                rule_text = rule.get("rule_text", "")
+
+                # Parse and compile the function code using helper function
+                try:
+                    apply_rule = parse_function_code(function_code)
+                except ValueError as e:
+                    error_msg = f"Failed to parse rule {rule_id_current}: {str(e)}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+                except Exception as e:
+                    error_msg = f"Failed to compile rule {rule_id_current}: {str(e)}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+
+                # Track transactions that triggered this rule
+                transactions_triggered = []
+
+                # Apply rule to each transaction
+                for transaction in transactions:
+                    try:
+                        # Execute the rule using helper function
+                        triggered = apply_rule_to_transaction(apply_rule, transaction)
+
+                        # Create alert if rule was triggered
+                        if triggered:
+                            alert_data = {
+                                "id": str(uuid.uuid4()),
+                                "transaction_id": transaction.transaction_id,
+                                "alert_type": f"RULE_VIOLATION",
+                                "severity": "medium",  # Default severity, could be configurable per rule
+                                "message": f"Rule '{rule_id_current}' triggered: {rule_text[:200]}",
+                                "timestamp": datetime.now(),
+                                "status": "active",
+                            }
+
+                            await PostgresDatabase.insert_alert(alert_data)
+                            alerts_created += 1
+                            transactions_triggered.append(transaction.transaction_id)
+                            logger.info(
+                                f"Alert created for transaction {transaction.transaction_id} based on rule {rule_id_current}"
+                            )
+
+                    except Exception as e:
+                        error_msg = f"Error applying rule {rule_id_current} to transaction {transaction.transaction_id}: {str(e)}"
+                        logger.error(error_msg)
+                        errors.append(error_msg)
+                        continue
+
+                rules_processed += 1
+                if transactions_triggered:
+                    triggered_rules.append(
+                        {
+                            "rule_id": rule_id_current,
+                            "transactions_count": len(transactions_triggered),
+                            "transactions": transactions_triggered[:5],  # Show first 5
+                        }
+                    )
+                logger.info(f"Successfully processed rule {rule_id_current}")
+
+            except Exception as e:
+                error_msg = f"Error processing rule: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+
+        response = {
+            "message": "Rules execution completed",
+            "rules_processed": rules_processed,
+            "total_rules": len(rules),
+            "transactions_processed": len(transactions),
+            "alerts_created": alerts_created,
+            "triggered_rules": triggered_rules,
+        }
+
+        if errors:
+            response["errors"] = errors[:10]  # Limit to first 10 errors
+            response["total_errors"] = len(errors)
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running rules on transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@data_router.post("/transactions/{transaction_id}/run-rules")
+async def run_rules_on_single_transaction(transaction_id: str):
+    """
+    Run all active rules against a specific transaction and generate alerts.
+    This is useful for testing rules on new transactions or re-evaluating a transaction.
+    """
+    try:
+        # Fetch the transaction
+        transaction_data = await PostgresDatabase.get_transaction(transaction_id)
+        if not transaction_data:
+            raise HTTPException(
+                status_code=404, detail=f"Transaction {transaction_id} not found"
+            )
+
+        transaction = Transaction(**transaction_data)
+
+        # Fetch all rules
+        rules = await PostgresDatabase.get_all_rules()
+        if not rules:
+            return {
+                "message": "No rules found in database",
+                "transaction_id": transaction_id,
+                "rules_processed": 0,
+                "alerts_created": 0,
+            }
+
+        # Process each rule
+        alerts_created = 0
+        rules_processed = 0
+        triggered_rules = []
+        errors = []
+
+        for rule in rules:
+            try:
+                rule_id = rule["id"]
+                function_code = rule["function_code"]
+                rule_text = rule.get("rule_text", "")
+
+                # Parse and compile the function code using helper function
+                try:
+                    apply_rule = parse_function_code(function_code)
+                except ValueError as e:
+                    error_msg = f"Failed to parse rule {rule_id}: {str(e)}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+                except Exception as e:
+                    error_msg = f"Failed to compile rule {rule_id}: {str(e)}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+
+                # Execute the rule using helper function
+                triggered = apply_rule_to_transaction(apply_rule, transaction)
+
+                # Create alert if rule was triggered
+                if triggered:
+                    alert_data = {
+                        "id": str(uuid.uuid4()),
+                        "transaction_id": transaction.transaction_id,
+                        "alert_type": f"RULE_VIOLATION",
+                        "severity": "medium",
+                        "message": f"Rule '{rule_id}' triggered: {rule_text[:200]}",
+                        "timestamp": datetime.now(),
+                        "status": "active",
+                    }
+
+                    alert_id = await PostgresDatabase.insert_alert(alert_data)
+                    alerts_created += 1
+                    triggered_rules.append(
+                        {
+                            "rule_id": rule_id,
+                            "rule_text": rule_text,
+                            "alert_id": alert_id,
+                        }
+                    )
+                    logger.info(
+                        f"Alert created for transaction {transaction_id} based on rule {rule_id}"
+                    )
+
+                rules_processed += 1
+
+            except Exception as e:
+                error_msg = (
+                    f"Error processing rule {rule.get('id', 'unknown')}: {str(e)}"
+                )
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+
+        response = {
+            "message": "Rules execution completed for transaction",
+            "transaction_id": transaction_id,
+            "rules_processed": rules_processed,
+            "total_rules": len(rules),
+            "alerts_created": alerts_created,
+            "triggered_rules": triggered_rules,
+        }
+
+        if errors:
+            response["errors"] = errors[:10]
+            response["total_errors"] = len(errors)
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running rules on transaction {transaction_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
