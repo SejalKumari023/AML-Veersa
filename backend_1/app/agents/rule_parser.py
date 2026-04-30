@@ -1,4 +1,4 @@
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, END
 from openai import OpenAI
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,6 +21,7 @@ class RuleParserState(TypedDict):
     test_cases: Optional[
         list[Dict[str, Any]]
     ]  # List of dicts with 'transaction' and 'should_trigger'
+    all_tests_passed: bool
 
 
 # Structured output schema
@@ -112,7 +113,7 @@ def apply_rule_to_transaction(apply_rule_func, transaction: Transaction) -> bool
 
 
 # Agent function to convert rule text to code
-def rule_to_code_agent(state: RuleParserState) -> RuleCodeOutput:
+def rule_to_code_agent(state: RuleParserState) -> Dict[str, Any]:
     """
     Converts a financial rule in text form to a Python function that applies the rule to a transaction.
     The function returns True if the rule is triggered, False otherwise.
@@ -166,18 +167,24 @@ Provide a brief explanation and list the attributes used.""",
             "rule_text": state["rule_text"],
         }
     )
-    # Ensure result is RuleCodeOutput
+    # Ensure result is RuleCodeOutput and convert to dict
     if isinstance(result, dict):
-        return RuleCodeOutput(**result)
+        parsed_result = RuleCodeOutput(**result)
     elif isinstance(result, RuleCodeOutput):
-        return result
+        parsed_result = result
     elif isinstance(result, BaseModel):
-        return RuleCodeOutput.parse_obj(result)
+        parsed_result = RuleCodeOutput.parse_obj(result)
     else:
         raise TypeError("Unexpected result type from chain.invoke")
 
+    return {
+        "function_code": parsed_result.function_code,
+        "explanation": parsed_result.explanation,
+        "attributes_used": parsed_result.attributes_used,
+    }
 
-def test_rule_on_transaction(state: RuleParserState) -> bool:
+
+def test_rule_on_transaction(state: RuleParserState) -> Dict[str, Any]:
     """
     Tests the generated rule function code on a sample transaction.
     Returns whether the rule was triggered.
@@ -278,10 +285,14 @@ The Transaction object has the following attributes: {transaction_attributes}"""
         )
         print(f"{'='*50}\n")
 
-    return tests_passed == total_tests if total_tests > 0 else False
+    all_tests_passed = tests_passed == total_tests if total_tests > 0 else False
+    print("Tests completed")
+    print(f"All tests passed: {all_tests_passed}")
+
+    return {"all_tests_passed": all_tests_passed, "test_cases": state.get("test_cases")}
 
 
-def refine_rule_code(state: RuleParserState) -> str:
+def refine_rule_code(state: RuleParserState) -> Dict[str, Any]:
     """
     Refines the generated rule function code based on test results.
     """
@@ -300,7 +311,8 @@ def refine_rule_code(state: RuleParserState) -> str:
                 "system",
                 """You are an expert Python programmer specialized in financial compliance systems.
 Given a Python function that applies a financial rule to a Transaction object, and the results of test cases,
-refine the function code to ensure it passes all test cases.""",
+refine the function code to ensure it passes all test cases. The rule is based on the following description: {rule_text}. 
+Find out why it may be failing test cases and fix it.""",
             ),
             (
                 "user",
@@ -314,19 +326,26 @@ refine the function code to ensure it passes all test cases.""",
     # Invoke chain to refine function code
     result = chain.invoke(
         {
-            "function_code": state["function_code"],
+            "function_code": state.get("function_code"),
             "test_results": state.get("test_cases", []),
+            "rule_text": state.get("rule_text"),
         }
     )
-    # Return the refined function code
+    # Return partial state update
     if isinstance(result, dict):
-        return result.get("function_code", "")
+        refined_result = RuleCodeOutput(**result)
     elif isinstance(result, RuleCodeOutput):
-        return result.function_code
+        refined_result = result
     elif isinstance(result, BaseModel):
-        return RuleCodeOutput.parse_obj(result).function_code
+        refined_result = RuleCodeOutput.parse_obj(result)
     else:
         raise TypeError("Unexpected result type from chain.invoke")
+
+    return {
+        "function_code": refined_result.function_code,
+        "explanation": refined_result.explanation,
+        "attributes_used": refined_result.attributes_used,
+    }
 
 
 # LangGraph agent setup
@@ -336,15 +355,9 @@ class RuleParserAgent:
         self.tools = {"rule_to_code": rule_to_code_agent}
 
     def __call__(self, state):
+        print("RuleParserAgent called")
         result = self.tools["rule_to_code"](state)
-        state["function_code"] = result.function_code
-        state["explanation"] = result.explanation
-        state["attributes_used"] = result.attributes_used
-        return {
-            "function_code": result.function_code,
-            "explanation": result.explanation,
-            "attributes_used": result.attributes_used,
-        }
+        return result
 
 
 class RuleTestingAgent:
@@ -353,10 +366,9 @@ class RuleTestingAgent:
         self.tools = {"test_rule": test_rule_on_transaction}
 
     def __call__(self, state):
-        print("RuleTestingAgent called with state:")
-        print(state)
+        print("RuleTestingAgent called")
         result = self.tools["test_rule"](state)
-        return {"rule_triggered": result}
+        return result
 
 
 class RuleRefinerAgent:
@@ -365,17 +377,31 @@ class RuleRefinerAgent:
         self.tools = {"refine_rule": refine_rule_code}
 
     def __call__(self, state):
-        print("RuleRefinerAgent called with state:")
+        print("RuleRefinerAgent called")
         print(state)
         result = self.tools["refine_rule"](state)
-        return {"refined_function_code": result}
+        return result
 
 
 # LangGraph graph setup
 def build_rule_parser_graph():
+    def should_continue(state: RuleParserState) -> str:
+        """Determine if we should continue refining or end"""
+        print("Evaluating should_continue condition")
+        print(f"All tests passed: {state.get('all_tests_passed', False)}")
+        if state.get("all_tests_passed", False):
+            return "end"
+        else:
+            return "refine_rule"
+
     graph = StateGraph(RuleParserState)
     graph.add_node("parse_rule", RuleParserAgent())
     graph.add_node("test_rule", RuleTestingAgent())
+    graph.add_node("refine_rule", RuleRefinerAgent())
     graph.add_edge("parse_rule", "test_rule")
+    graph.add_conditional_edges(
+        "test_rule", should_continue, {"end": END, "refine_rule": "refine_rule"}
+    )
+    graph.add_edge("refine_rule", "test_rule")  # Loop back to test after refining
     graph.set_entry_point("parse_rule")
     return graph.compile()
