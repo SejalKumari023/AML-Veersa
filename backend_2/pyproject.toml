@@ -1,0 +1,35 @@
+[project]
+name = "backend-2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "bson>=0.5.10",
+    "docling>=2.60.0",
+    "dotenv>=0.9.9",
+    "exifread>=3.5.1",
+    "fastapi>=0.120.4",
+    "google-cloud-vision>=3.11.0",
+    "google-search-results>=2.4.2",
+    "groq>=0.33.0",
+    "imagehash>=4.3.2",
+    "mlx-vlm>=0.3.5",
+    "numpy>=2.2.6",
+    "passlib>=1.7.4",
+    "pdf2image>=1.17.0",
+    "pdfplumber>=0.11.7",
+    "pydantic>=2.12.3",
+    "pymongo>=4.15.3",
+    "pypdf2>=3.0.1",
+    "pyspellchecker>=0.8.3",
+    "pytesseract>=0.3.13",
+    "python-jose>=3.5.0",
+    "python-multipart>=0.0.20",
+    "pywavelets>=1.8.0",
+    "requests>=2.32.5",
+    "scikit-image>=0.25.2",
+    "scikit-learn>=1.7.2",
+    "spellchecker>=0.4",
+    "uvicorn>=0.38.0",
+]
