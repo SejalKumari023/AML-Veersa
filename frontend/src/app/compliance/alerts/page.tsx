@@ -147,7 +147,7 @@ export default function AlertsPage() {
                         <TableBody>
                             {alerts.map((alert) => (
                                 <TableRow key={alert.id}>
-                                    <TableCell className="whitespace-nowrap">
+                                    <TableCell className="whitespace-nowrap" suppressHydrationWarning>
                                         {format(new Date(alert.timestamp), "MMM d, yyyy HH:mm:ss")}
                                     </TableCell>
                                     <TableCell className="whitespace-nowrap">

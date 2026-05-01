@@ -367,12 +367,19 @@ async def get_document_analysis(document_id: str):
 
         analysis = await db.document_analysis.find_one({"_id": document_id})
         if not analysis:
-            raise HTTPException(status_code=404, detail="Document analysis not found")
+            # Check if it was already renamed to id due to in-memory db reference modification
+            analysis = await db.document_analysis.find_one({"id": document_id})
+            if not analysis:
+                raise HTTPException(status_code=404, detail="Document analysis not found")
 
-        analysis["id"] = str(analysis["_id"])
-        del analysis["_id"]
+        # Make a copy to avoid modifying the in-memory db reference
+        analysis_copy = analysis.copy()
+        
+        if "_id" in analysis_copy:
+            analysis_copy["id"] = str(analysis_copy["_id"])
+            del analysis_copy["_id"]
 
-        return DocumentAnalysis(**analysis)
+        return DocumentAnalysis(**analysis_copy)
 
     except HTTPException:
         raise
@@ -393,9 +400,11 @@ async def get_all_document_analyses():
         analyses = []
 
         async for analysis in analyses_cursor:
-            analysis["id"] = str(analysis["_id"])
-            del analysis["_id"]
-            analyses.append(DocumentAnalysis(**analysis))
+            analysis_copy = analysis.copy()
+            if "_id" in analysis_copy:
+                analysis_copy["id"] = str(analysis_copy["_id"])
+                del analysis_copy["_id"]
+            analyses.append(DocumentAnalysis(**analysis_copy))
 
         return analyses
 

@@ -38,19 +38,22 @@ services:
                 condition: service_healthy
         restart: always
 
-    # backend_2:
-    #     build: ./backend_2
-    #     expose:
-    #         - "5002"
-    #     ports:
-    #         - "5002:5002"
-    #     environment:
-    #         - PORT=5002
-    #         - HOST=0.0.0.0
-    #         - DEBUG=false
-    #         - PYTHONUNBUFFERED=1
-    #         - GROQ_API_KEY=${GROQ_API_KEY} # From .env file
-    #     restart: always
+    backend_2:
+        build: ./backend_2
+        expose:
+            - "5002"
+        ports:
+            - "5002:5002"
+        environment:
+            - PORT=5002
+            - HOST=0.0.0.0
+            - DEBUG=false
+            - PYTHONUNBUFFERED=1
+            - GROQ_API_KEY=${GROQ_API_KEY} # From .env file
+            - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json 
+        volumes:
+            - ./gcp-credentials.json:/app/gcp-credentials.json
+        restart: always
 
     frontend:
         build: ./frontend
@@ -69,7 +72,7 @@ services:
             - /app/.next
         depends_on:
             - backend_1
-            # - backend_2
+            - backend_2
         restart: always
         extra_hosts:
             - "host.docker.internal:host-gateway"

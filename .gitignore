@@ -51,3 +51,5 @@ htmlcov/
 
 # Docker
 docker-compose.override.yml
+
+gcp-credentials.json

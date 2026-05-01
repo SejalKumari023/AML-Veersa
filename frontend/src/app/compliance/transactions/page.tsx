@@ -5,9 +5,10 @@ import {
   FileText,
   Play,
   TrendingUp,
+  Upload,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { getUser } from "~/lib/auth";
 import { Button } from "~/components/ui/button";
@@ -116,6 +117,43 @@ export default function ComplianceTransactionsPage() {
   const [rulesLoading, setRulesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rulesError, setRulesError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
+      const response = await fetch(`${apiUrl}/data/upload-transactions`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to upload: ${response.statusText}`);
+      }
+
+      // Refresh page to load new data
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   // Fetch transactions from API
   useEffect(() => {
@@ -284,9 +322,26 @@ export default function ComplianceTransactionsPage() {
               Review transactions and run compliance rules
             </p>
           </div>
-          <Link href="/compliance">
-            <Button variant="outline">Back to Rules</Button>
-          </Link>
+          <div className="flex items-center gap-3">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept=".csv"
+              className="hidden"
+            />
+            <Button 
+              variant="outline" 
+              onClick={handleUploadClick} 
+              disabled={isUploading}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              {isUploading ? "Uploading..." : "Upload CSV"}
+            </Button>
+            <Link href="/compliance">
+              <Button variant="outline">Back to Rules</Button>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -397,9 +452,9 @@ export default function ComplianceTransactionsPage() {
                 </h2>
                 <div className="flex gap-4">
                   <div className="flex flex-col gap-3 overflow-y-auto pr-2">
-                    {transactions.map((transaction) => (
+                    {transactions.map((transaction, index) => (
                       <Card
-                        key={transaction.id}
+                        key={`${transaction.transaction_id}-${index}`}
                         className={`hover:bg-accent/50 cursor-pointer transition-colors ${
                           selectedTransaction?.id === transaction.id
                             ? "border-primary ring-primary/20 ring-2"

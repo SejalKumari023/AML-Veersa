@@ -14,7 +14,6 @@ dependencies = [
     "google-search-results>=2.4.2",
     "groq>=0.33.0",
     "imagehash>=4.3.2",
-    "mlx-vlm>=0.3.5",
     "numpy>=2.2.6",
     "passlib>=1.7.4",
     "pdf2image>=1.17.0",
