@@ -50,3 +50,18 @@ services:
         restart: always
         extra_hosts:
             - "host.docker.internal:host-gateway"
+      
+    db:
+      image: postgres:14.1-alpine
+      restart: always
+      environment:
+        POSTGRES_DB: baer_aml
+        POSTGRES_USER: baer_aml
+        POSTGRES_PASSWORD: baer_aml
+      ports:
+        - "5432:5432"
+      volumes:
+        - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:
