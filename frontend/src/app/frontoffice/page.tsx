@@ -424,7 +424,7 @@ export default function FrontOfficePage() {
                                 </div>
                                 <div className="flex gap-4">
 
-                                    <div className="flex flex-col gap-3 max-h-dvh overflow-y-auto pr-2">
+                                    <div className="flex w-1/3 min-w-[300px] flex-col gap-3 max-h-dvh overflow-y-auto pr-2">
                                         {filteredClients.map((client) => (
                                             <Card
                                                 key={client.id}
@@ -437,9 +437,9 @@ export default function FrontOfficePage() {
                                                 <CardContent className="pt-4">
                                                     <div className="space-y-2">
                                                         <div className="flex items-start justify-between gap-2">
-                                                            <div className="flex-1">
-                                                                <h3 className="text-sm font-semibold text-foreground">{client.name}</h3>
-                                                                <p className="text-xs text-muted-foreground">{client.type}</p>
+                                                            <div className="flex-1 min-w-0">
+                                                                <h3 className="text-sm font-semibold text-foreground truncate" title={client.name}>{client.name}</h3>
+                                                                <p className="text-xs text-muted-foreground truncate capitalize">{client.type.replace(/_/g, " ")}</p>
                                                             </div>
                                                             <span
                                                                 className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium shrink-0 ${getStatusColor(
@@ -449,7 +449,7 @@ export default function FrontOfficePage() {
                                                                 {client.status}
                                                             </span>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
+                                                        <div className="flex flex-wrap items-center gap-2">
                                                             <span
                                                                 className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${getRiskColor(
                                                                     client.riskRating
@@ -479,7 +479,7 @@ export default function FrontOfficePage() {
                                     </div>
 
                                     {/* Client Details */}
-                                    <div className="w-full max-h-dvh overflow-y-auto">
+                                    <div className="flex-1 max-h-dvh overflow-y-auto">
                                         {selectedClient ? (
                                             <div className="flex flex-col gap-4">
                                                 {/* Client Header */}
