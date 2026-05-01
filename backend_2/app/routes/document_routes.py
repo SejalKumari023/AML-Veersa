@@ -10,6 +10,7 @@ from datetime import datetime
 from app.database.connection import Database
 from app.services.process_document import process_documents, DocumentProcessingResult
 from app.services.validate_document import validate_document, ValidationReport
+from app.services.report_generation_service import get_report_generation_service
 from app.utils.logging_config import setup_logging
 
 logger = setup_logging(level="INFO")
@@ -569,6 +570,165 @@ async def download_json(document_id: str):
         raise
     except Exception as e:
         logger.error(f"Error downloading JSON {document_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@document_router.get("/report/{document_id}")
+async def generate_report(
+    document_id: str,
+    persona: str = "all",
+    include_image: bool = True
+):
+    """
+    Generate persona-specific report for a document.
+    
+    Personas:
+    - "executive": Executive Summary only (Front Office & Legal)
+    - "compliance": Issue Breakdown + Authenticity (Compliance Officers)
+    - "legal": Executive Summary + Authenticity (Legal Team)
+    - "front_office": Executive Summary + Format Validation (Front Office/Ops)
+    - "audit": Audit Trail only (Internal Audit)
+    - "all": Complete report with all sections
+    
+    Args:
+        document_id: Document analysis ID
+        persona: Target persona for report
+        include_image: Whether to include image analysis if available
+    """
+    try:
+        db = Database.get_database()
+        
+        # Get document analysis
+        doc = await db.document_analysis.find_one({"_id": document_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Check if processing is complete
+        status = doc.get("analysis_status", "pending")
+        if status != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document processing not complete. Status: {status}"
+            )
+        
+        # Convert document data to dict format
+        doc_data = {
+            "id": str(doc["_id"]),
+            "filename": doc.get("filename", "Unknown"),
+            "file_type": doc.get("file_type", ""),
+            "upload_timestamp": doc.get("upload_timestamp"),
+            "risk_score": doc.get("risk_score", 0.0),
+            "findings": doc.get("findings", []),
+            "metadata": doc.get("metadata", {}),
+            "validation_report": doc.get("validation_report", {}),
+            "processed_files": doc.get("processed_files", {}),
+            "analysis_completed_at": doc.get("analysis_completed_at")
+        }
+        
+        # Get image analysis if requested and available
+        image_data = None
+        if include_image:
+            # Try to find related image analysis by filename pattern
+            # In real implementation, you might link them via customer_id or other identifier
+            image_filename = doc.get("filename", "").replace(".pdf", "").replace(".doc", "").replace(".docx", "")
+            image_analyses = await db.image_analysis.find(
+                {"filename": {"$regex": image_filename, "$options": "i"}}
+            ).to_list(length=1)
+            
+            if image_analyses:
+                img = image_analyses[0]
+                image_data = {
+                    "authenticity_score": img.get("authenticity_score", 0.0),
+                    "tampering_detected": img.get("tampering_detected", False),
+                    "ai_generated_probability": img.get("ai_generated_probability", 0.0),
+                    "findings": img.get("findings", {})
+                }
+        
+        # Generate report
+        report_service = get_report_generation_service()
+        markdown_report = await report_service.generate_complete_report(
+            document_data=doc_data,
+            image_data=image_data,
+            persona=persona.lower()
+        )
+        
+        # Save report to output directory
+        output_dir = OUTPUT_DIR / document_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        report_filename = f"report_{persona}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.md"
+        report_path = output_dir / report_filename
+        report_path.write_text(markdown_report, encoding="utf-8")
+        
+        logger.info(f"Generated {persona} report for document {document_id}: {report_path}")
+        
+        from fastapi.responses import Response
+        return Response(
+            content=markdown_report,
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="{report_filename}"'
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating report for document {document_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+
+@document_router.get("/report/{document_id}/{persona}")
+async def generate_persona_report(
+    document_id: str,
+    persona: str,
+    include_image: bool = True
+):
+    """
+    Generate specific persona report (alias for /report/{document_id}?persona={persona}).
+    Personas: executive, compliance, legal, front_office, audit, all
+    """
+    return await generate_report(document_id, persona, include_image)
+
+
+@document_router.get("/download/{document_id}/report/{persona}")
+async def download_report(
+    document_id: str,
+    persona: str = "all"
+):
+    """Download saved report file for a specific persona"""
+    try:
+        db = Database.get_database()
+        
+        doc = await db.document_analysis.find_one({"_id": document_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Look for report file in output directory
+        output_dir = OUTPUT_DIR / document_id
+        if not output_dir.exists():
+            raise HTTPException(status_code=404, detail="No reports found for this document")
+        
+        # Find most recent report for this persona
+        report_files = list(output_dir.glob(f"report_{persona}_*.md"))
+        if not report_files:
+            # Try to generate it if not found
+            return await generate_report(document_id, persona, include_image=True)
+        
+        # Get most recent report
+        report_file = sorted(report_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            path=str(report_file),
+            media_type="text/markdown",
+            filename=report_file.name
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading report {document_id}/{persona}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
