@@ -17,7 +17,7 @@ class Neo4jDatabase:
         """Initialize Neo4j connection parameters from environment."""
         self.uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self.user = os.getenv("NEO4J_USER", "neo4j")
-        self.password = os.getenv("NEO4J_PASSWORD", "baer_aml_neo4j")
+        self.password = os.getenv("NEO4J_PASSWORD", "aml_neo4j")
         self._driver: Optional[Driver] = None
 
     async def initialize(self):

@@ -87,6 +87,7 @@ export function NavUser({
                                 </div>
                             </div>
                         </DropdownMenuLabel>
+                        {/*
                         <DropdownMenuSeparator />
                         <DropdownMenuGroup>
                             <DropdownMenuItem>
@@ -109,6 +110,7 @@ export function NavUser({
                                 Notifications
                             </DropdownMenuItem>
                         </DropdownMenuGroup>
+                        */}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={handleLogout}>
                             <LogOut />

@@ -152,9 +152,9 @@ class PostgresDatabase:
             # Get connection parameters from environment
             db_host = os.getenv("POSTGRES_HOST", "localhost")
             db_port = os.getenv("POSTGRES_PORT", "5432")
-            db_name = os.getenv("POSTGRES_DB", "baer_aml")
-            db_user = os.getenv("POSTGRES_USER", "baer_aml")
-            db_password = os.getenv("POSTGRES_PASSWORD", "baer_aml")
+            db_name = os.getenv("POSTGRES_DB", "aml")
+            db_user = os.getenv("POSTGRES_USER", "aml")
+            db_password = os.getenv("POSTGRES_PASSWORD", "aml")
 
             cls.pool = await asyncpg.create_pool(
                 host=db_host,

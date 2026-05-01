@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Julius Baer hackathon project implementing two agentic AI-driven AML (Anti-Money Laundering) solutions:
+This is a project implementing two agentic AI-driven AML (Anti-Money Laundering) solutions:
 
 1. **Part 1: Real-Time AML Monitoring & Alerts** - Monitors regulatory changes and client transactions to detect AML risks
 2. **Part 2: Document & Image Corroboration** - Automates verification of client corroboration documents

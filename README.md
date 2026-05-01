@@ -1,4 +1,4 @@
-# Julius Baer — Agentic AI for Real-Time AML Monitoring and Alerts
+# AML — Agentic AI for Real-Time AML Monitoring and Alerts
 
 > **AML Agentic AI Solutions** — Build two agentic AI-driven solutions for Anti-Money Laundering (AML) Monitoring and Document & Image Corroboration
 
