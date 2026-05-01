@@ -50,7 +50,7 @@ services:
             - DEBUG=false
             - PYTHONUNBUFFERED=1
             - GROQ_API_KEY=${GROQ_API_KEY} # From .env file
-            - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json 
+            - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
         volumes:
             - ./gcp-credentials.json:/app/gcp-credentials.json
         restart: always
@@ -76,41 +76,41 @@ services:
         restart: always
         extra_hosts:
             - "host.docker.internal:host-gateway"
-      
+
     db:
-      image: postgres:14.1-alpine
-      restart: always
-      environment:
-        POSTGRES_DB: aml
-        POSTGRES_USER: aml
-        POSTGRES_PASSWORD: aml
-      ports:
-        - "5432:5432"
-      volumes:
-        - db_data:/var/lib/postgresql/data
+        image: postgres:14.1-alpine
+        restart: always
+        environment:
+            POSTGRES_DB: aml
+            POSTGRES_USER: aml
+            POSTGRES_PASSWORD: aml
+        ports:
+            - "5432:5432"
+        volumes:
+            - db_data:/var/lib/postgresql/data
 
     neo4j:
-      image: neo4j:5.13-community
-      restart: always
-      environment:
-        - NEO4J_AUTH=neo4j/aml_neo4j
-        - NEO4J_PLUGINS=["apoc"]
-        - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-        - NEO4J_dbms_memory_heap_max__size=2G
-      ports:
-        - "7474:7474"  # HTTP
-        - "7687:7687"  # Bolt
-      volumes:
-        - neo4j_data:/data
-        - neo4j_logs:/logs
-      healthcheck:
-        test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1"]
-        interval: 5s
-        timeout: 3s
-        retries: 10
-        start_period: 20s
+        image: neo4j:5.13-community
+        restart: always
+        environment:
+            - NEO4J_AUTH=neo4j/aml_neo4j
+            - NEO4J_PLUGINS=["apoc"]
+            - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+            - NEO4J_dbms_memory_heap_max__size=2G
+        ports:
+            - "7474:7474" # HTTP
+            - "7687:7687" # Bolt
+        volumes:
+            - neo4j_data:/data
+            - neo4j_logs:/logs
+        healthcheck:
+            test: [ "CMD-SHELL", "wget --no-verbose --tries=1 --spider localhost:7474 || exit 1" ]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+            start_period: 20s
 
 volumes:
-  db_data:
-  neo4j_data:
-  neo4j_logs:
+    db_data:
+    neo4j_data:
+    neo4j_logs:
