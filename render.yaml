@@ -1,0 +1,71 @@
+databases:
+  - name: aml-postgres
+    databaseName: aml
+    user: aml
+    plan: free
+
+services:
+  - type: web
+    name: backend-1
+    runtime: docker
+    dockerfilePath: ./backend_1/Dockerfile
+    dockerContext: ./backend_1
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 5001
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEBUG
+        value: false
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: aml-postgres
+          property: host
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: aml-postgres
+          property: port
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: aml-postgres
+          property: database
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: aml-postgres
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: aml-postgres
+          property: password
+      - key: NEO4J_URI
+        value: bolt://YOUR_NEO4J_HOST:7687   # Replace after deploying Neo4j separately
+      - key: NEO4J_USER
+        value: neo4j
+      - key: NEO4J_PASSWORD
+        sync: false   # Set this manually in the Render dashboard
+      - key: GROQ_API_KEY
+        sync: false   # Set this manually in the Render dashboard
+
+  - type: web
+    name: backend-2
+    runtime: docker
+    dockerfilePath: ./backend_2/Dockerfile
+    dockerContext: ./backend_2
+    plan: free
+    envVars:
+      - key: PORT
+        value: 5002
+      - key: HOST
+        value: 0.0.0.0
+      - key: DEBUG
+        value: false
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: GROQ_API_KEY
+        sync: false   # Set this manually in the Render dashboard
+      - key: GCP_CREDENTIALS_BASE64
+        sync: false   # Set this manually in the Render dashboard
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        value: /app/gcp-credentials.json
