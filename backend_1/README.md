@@ -1,11 +1,114 @@
-# Backend
+# Backend 1 — AML Monitoring Service
 
-`uv run python -m uvicorn app:create_app --factory --reload`
+FastAPI service for real-time AML transaction monitoring, compliance rule management, alert generation, and the AML monitoring agent.
 
-# Sample json for POST rule
+## Quick Start
 
-```json
-{
-    "rule": "1 This Notice is issued pursuant to section 47(1) of the Financial Oversight Act (Cap. 12) (“the Act”) and applies to all Financial Institutions (FIs) processing transactions in Singapore. [Hypothetical Notice 778]\n\n2 This Notice sets out requirements relating to – \n(a) automated transaction monitoring for Money Laundering (ML) and Terrorism Financing (TF) risks; and \n(b) triggers for Enhanced Due Diligence (EDD) and Suspicious Transaction Reporting (STR) based on transaction data.\nThe requirements seek to ensure FIs can effectively identify and mitigate risks discoverable from their transaction records.\n\n1 Definitions\n3 For the purposes of this Notice — \n“Data Fields” refers to the attributes captured in the FIs transaction processing system, including but not limited to 'amount', 'currency', 'originator_country', 'beneficiary_country', 'customer_risk_rating', 'customer_is_pep', 'daily_cash_total_customer', 'daily_cash_txn_count', 'kyc_due_date', and 'purpose_code';\n“High-Risk Customer” means a customer designated with a risk rating of 'High' or 'Highest' by the FI's internal risk assessment framework, as reflected in the 'customer_risk_rating' Data Field;\n“High-Risk Jurisdiction” means any country or territory identified by the Authority or other relevant international bodies (e.g., FATF) as having significant AML/CFT deficiencies, which an FI must maintain an internal list of;\n“Large Value Threshold” means a transaction 'amount' equivalent to or exceeding S$10,000, or its equivalent in any 'currency';\n“PEP” means a Politically Exposed Person, as identified and flagged in the 'customer_is_pep' Data Field;\n“Structuring” means a pattern of transactions, including but not limited to, multiple cash transactions by a single customer within a 24-hour period ('daily_cash_txn_count' > 1) that in aggregate exceed the “Large Value Threshold” ('daily_cash_total_customer' >= 10000), which appears designed to evade reporting thresholds;\n“Suspicious Transaction” means a transaction that, based on the Data Fields, meets one or more criteria in Part 2 of this Notice, or is otherwise inconsistent with the customer's profile or known legitimate activities.\n\n2 Transaction Monitoring Triggers\n4 An FI must implement and maintain an automated transaction monitoring system capable of flagging any transaction for review that meets one or more of the following criteria discoverable from the Data Fields:\n(a) The transaction 'amount' meets or exceeds the “Large Value Threshold”;\n(b) The transaction involves a “High-Risk Customer” or a “PEP”, regardless of the 'amount';\n(c) The 'originator_country' or 'beneficiary_country' is a “High-Risk Jurisdiction”;\n(d) The transaction demonstrates patterns consistent with “Structuring”, as defined by the 'daily_cash_total_customer' and 'daily_cash_txn_count' fields;\n(e) The transaction involves a customer whose KYC is overdue, as indicated by 'kyc_due_date' being in the past;\n(f) The transaction indicates that required Enhanced Due Diligence was not performed ('edd_required' is true but 'edd_performed' is false);\n(g) The transaction 'purpose_code' is missing, invalid, or known to be high-risk, or the 'narrative' field is vague or nonsensical.\n\n3 Actions on Flagged Transactions\n5 For any transaction flagged under paragraph 4, the FI must — \n(a) conduct a timely review of the transaction and associated customer data;\n(b) perform EDD ('edd_performed' must be set to true) if not already completed, to understand the nature and purpose of the transaction; and \n(c) document the findings of the review.\n\n6 Where a review under paragraph 5 confirms a reasonable suspicion of ML/TF, the FI must log the suspicion ('suspicion_determined_datetime') and file an STR with the relevant authorities ('str_filed_datetime') promptly.\n\n7 This Notice shall take effect on 1 January 2026."
-}
+```bash
+# Install dependencies (uses uv)
+uv sync
+# or: pip install -r requirements.txt
+
+# Start server (default port 5001)
+python app.py
+
+# With hot-reload for development
+uvicorn app:create_app --factory --reload --host 0.0.0.0 --port 5001
 ```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5001` | Server port |
+| `HOST` | `0.0.0.0` | Bind address |
+| `GROQ_API_KEY` | — | **Required** — Groq API key |
+| `GROQ_API_BASE` | `https://api.groq.com/openai/v1` | LLM API base URL |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | LLM model for agents |
+| `POSTGRES_HOST` | `localhost` | PostgreSQL host |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_DB` | `aml` | Database name |
+| `POSTGRES_USER` | `aml` | Database user |
+| `POSTGRES_PASSWORD` | `aml` | Database password |
+| `NEO4J_URI` | — | Neo4j bolt URI (optional) |
+| `NEO4J_USER` | — | Neo4j username (optional) |
+| `NEO4J_PASSWORD` | — | Neo4j password (optional) |
+| `CORS_ORIGINS` | `*` | Allowed CORS origins |
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Health check |
+| `/health` | GET | Detailed health |
+| `/api/users/` | POST | Register user |
+| `/api/data/transactions` | GET | List transactions |
+| `/api/data/upload-transactions` | POST | Upload CSV |
+| `/api/data/alerts` | GET | List alerts |
+| `/api/data/analytics/risk-summary` | GET | Risk analytics |
+| `/api/data/analytics/run-rules` | GET | Run all rules on all transactions |
+| `/api/data/transactions/{id}/run-rules` | POST | Run rules on single transaction |
+| `/api/rules/` | GET/POST | List or create rules |
+| `/api/rules/{id}` | GET/PUT/DELETE | Manage a rule |
+| `/api/customers/customers` | GET | List customers |
+| `/api/customers/customers/{id}` | GET | Get customer profile |
+| `/api/customers/customers/graph/relationships` | GET | Customer relationship graph |
+| `/api/agent` | POST | Chat with AML agent |
+| `/api/prompts` | GET | List agent prompts |
+| `/api/prompts/{name}` | PUT | Update agent prompt |
+
+Full interactive docs: **http://localhost:5001/docs**
+
+## Architecture
+
+```
+app/
+├── __init__.py         # FastAPI app factory, middleware, router registration
+├── app.py              # Entry point (uvicorn)
+├── config.py           # Environment-based configuration
+├── agents/
+│   ├── aml_agent.py    # LangGraph ReAct agent (agent_node → tools → agent_node)
+│   ├── aml_tools.py    # 10 @tool functions wrapping DB/service logic
+│   └── rule_parser.py  # Rule text → Python function pipeline (parse→test→refine)
+├── database/
+│   ├── connection.py   # PostgreSQL (asyncpg) — transactions, rules, alerts, prompts
+│   └── neo4j_connection.py  # Neo4j graph — customer relationships
+├── models/
+│   └── transaction.py  # Pydantic Transaction model (60+ fields)
+├── routes/
+│   ├── agent_routes.py    # /api/agent, /api/prompts
+│   ├── data_routes.py     # /api/data/*
+│   ├── rules_routes.py    # /api/rules/*
+│   ├── customer_routes.py # /api/customers/*
+│   └── user_routes.py     # /api/users/*
+└── services/           # Business logic (rule execution, transaction processing)
+```
+
+## Creating a Rule (Example)
+
+```bash
+curl -X POST http://localhost:5001/api/rules/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rule": "Flag transactions over 10000 USD from high-risk jurisdictions",
+    "rule_id": "RULE-001"
+  }'
+```
+
+The rule goes through a **3-stage LangGraph pipeline**:
+1. **Parse** — LLM converts rule text to a Python `apply_rule(transaction) -> bool` function
+2. **Test** — LLM generates 10 test transactions; the function is executed against each
+3. **Refine** — If tests fail, LLM refines the code and re-tests until all pass
+
+## Ingesting a Regulatory Notice
+
+```bash
+curl -X POST http://localhost:5001/api/agent \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Ingest this notice: All cash transactions above S$5000 must be flagged for review.", "conversation_history": []}'
+```
+
+## Security Notes
+
+- The rule parser uses `exec()` to execute LLM-generated Python code. This is sandboxed to a restricted namespace but is an intentional design choice for the hackathon. In production, consider using a sandboxed execution environment.
+- All LLM interactions use a read-only `Transaction` model — the generated function cannot modify database state.
