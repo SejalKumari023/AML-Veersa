@@ -1,29 +1,45 @@
-# Create T3 App
+# Frontend — AML-Veersa UI
 
-This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
+Next.js 15 (T3 Stack) frontend for the AML-Veersa platform. Role-based dashboards for Legal, Compliance, and Front Office teams, plus an AI Agent chat hub.
 
-## What's next? How do I make an app with this?
+## Quick Start
 
-We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
+```bash
+npm install
+npm run dev     # http://localhost:3000
+```
 
-If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
+## Environment Variables
 
-- [Next.js](https://nextjs.org)
-- [NextAuth.js](https://next-auth.js.org)
-- [Prisma](https://prisma.io)
-- [Drizzle](https://orm.drizzle.team)
-- [Tailwind CSS](https://tailwindcss.com)
-- [tRPC](https://trpc.io)
+Create `frontend/.env.local` when running outside Docker:
 
-## Learn More
+```env
+NEXT_PUBLIC_API_URL=http://localhost:5001/api
+NEXT_PUBLIC_API_URL_2=http://localhost:5002/api
+```
 
-To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
+Inside Docker, Nginx provides `/api` → Backend 1 and `/llm-api` → Backend 2 routing — no `.env.local` needed.
 
-- [Documentation](https://create.t3.gg/)
-- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
+## Pages
 
-You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
+| Route | Role | Description |
+|-------|------|-------------|
+| `/` | All | Landing page |
+| `/auth/login` | All | Login |
+| `/auth/register` | All | Register (select role) |
+| `/legal` | Legal | Regulatory notices & action items |
+| `/legal/ingest` | Legal | Upload regulatory documents |
+| `/compliance` | Compliance | Rule management from notices |
+| `/compliance/transactions` | Compliance | Transaction monitor, CSV upload, rule execution |
+| `/compliance/alerts` | Compliance | Alert table |
+| `/compliance/documents` | Compliance | Document validation |
+| `/frontoffice` | Front Office | Client KYC overview |
+| `/frontoffice/client-verification` | Front Office | Upload & verify KYC documents |
+| `/agent` | All | AI Agent Chat + Prompt Editor |
 
-## How do I deploy this?
+## Build
 
-Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.
+```bash
+npm run build    # Production build
+npm run check    # Lint + typecheck
+```
