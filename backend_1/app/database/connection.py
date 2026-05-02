@@ -323,6 +323,19 @@ class PostgresDatabase:
             )
             logger.info("Accounts table created/verified")
 
+            # Create prompts table
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS prompts (
+                    name TEXT PRIMARY KEY,
+                    description TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            logger.info("Prompts table created/verified")
+
     @classmethod
     async def close(cls):
         """Close database connection pool"""
@@ -861,3 +874,117 @@ class PostgresDatabase:
                 account_number,
             )
             return result == "DELETE 1"
+
+    # Prompt methods
+    @classmethod
+    async def get_all_prompts(cls) -> List[Dict[str, Any]]:
+        """Get all editable agent prompts"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+        async with cls.pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT name, description, content FROM prompts ORDER BY name"
+            )
+            return [dict(row) for row in rows]
+
+    @classmethod
+    async def get_prompt(cls, name: str) -> Optional[Dict[str, Any]]:
+        """Get a single prompt by name"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT name, description, content FROM prompts WHERE name = $1",
+                name,
+            )
+            return dict(row) if row else None
+
+    @classmethod
+    async def upsert_prompt(cls, name: str, content: str, description: str = "") -> Dict[str, Any]:
+        """Insert or update a prompt"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+        async with cls.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO prompts (name, description, content)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (name) DO UPDATE SET
+                    content = EXCLUDED.content,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING name, description, content
+                """,
+                name,
+                description,
+                content,
+            )
+            return dict(row)
+
+    @classmethod
+    async def seed_default_prompts(cls) -> None:
+        """Seed default prompts if they do not already exist"""
+        if cls.pool is None:
+            raise RuntimeError("Database pool not initialized")
+
+        defaults = [
+            (
+                "aml_system",
+                "System prompt for the AML monitoring ReAct agent",
+                """You are an expert AML (Anti-Money Laundering) monitoring agent for a financial institution.
+You have access to the following tools to investigate transactions, customers, and compliance rules:
+- search_transactions: Search and filter transactions by various criteria
+- get_transaction: Get full details of a specific transaction
+- get_alerts: Retrieve AML alerts (filter by severity/status)
+- get_risk_summary: Get aggregate risk analytics across all transactions
+- get_customer_profile: Fetch customer KYC/AML profile
+- get_customer_relationships: Explore transaction relationship graph for a customer
+- run_rules_on_transaction: Execute all compliance rules against a transaction
+- create_rule: Generate a new AML rule from a plain English description
+- get_all_rules: List all stored compliance rules
+- ingest_regulatory_notice: Parse regulatory text into a compliance rule
+
+Always reason step by step. Use Thought/Action/Observation format internally.
+When you have enough information, provide a clear, concise final answer with specific findings and recommendations.
+Focus on accuracy and compliance best practices.""",
+            ),
+            (
+                "aml_react_instruction",
+                "ReAct loop format instruction injected per turn",
+                """Follow this reasoning format:
+Thought: <your reasoning about what to do next>
+Action: <tool name and why you chose it>
+Observation: <what you learned from the tool result>
+... (repeat as needed)
+Final Answer: <clear summary of findings>""",
+            ),
+            (
+                "aml_routing_hint",
+                "Context injected by the frontend orchestrator before routing",
+                "The user is working in the AML monitoring system. Focus on transaction analysis, alerts, and compliance rules.",
+            ),
+            (
+                "rule_parser_system",
+                "System prompt for the existing rule_parser LangGraph nodes",
+                """You are an expert Python programmer specialized in financial compliance systems.
+Given a financial rule in plain English, convert it into a Python function that takes a Transaction object
+and returns True if the rule is triggered, False otherwise.
+The generated code must follow this format:
+def apply_rule(transaction: Transaction) -> bool:
+    return <condition>
+Ensure the code is syntactically correct and uses Transaction attributes properly.""",
+            ),
+        ]
+
+        async with cls.pool.acquire() as conn:
+            for name, description, content in defaults:
+                await conn.execute(
+                    """
+                    INSERT INTO prompts (name, description, content)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (name) DO NOTHING
+                    """,
+                    name,
+                    description,
+                    content,
+                )
+        logger.info("Default prompts seeded")

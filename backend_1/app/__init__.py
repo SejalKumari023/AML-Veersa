@@ -1,5 +1,8 @@
 from contextlib import asynccontextmanager
+import os
+import time
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_CONFIG, MAX_CONTENT_LENGTH
@@ -9,9 +12,12 @@ from app.routes.data_routes import data_router
 from app.routes.user_routes import user_router
 from app.routes.rules_routes import rule_router
 from app.routes.customer_routes import customer_router
+from app.routes.agent_routes import agent_router
 from app.utils.logging_config import setup_logging
 
 logger = setup_logging()
+_rate_window_start = time.time()
+_rate_hits: dict[str, int] = {}
 
 
 @asynccontextmanager
@@ -21,6 +27,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing PostgreSQL database connection pool...")
     try:
         await PostgresDatabase.initialize()
+        await PostgresDatabase.seed_default_prompts()
         logger.info("PostgreSQL database connection pool initialized")
     except Exception as e:
         logger.warning(f"Failed to initialize PostgreSQL: {e}")
@@ -85,11 +92,34 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def basic_rate_limit(request, call_next):
+        # Keep this light for demo/public MVP.
+        global _rate_window_start
+        now = time.time()
+        window_seconds = 60
+        limit = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))
+        if now - _rate_window_start >= window_seconds:
+            _rate_hits.clear()
+            _rate_window_start = now
+
+        client = request.client.host if request.client else "unknown"
+        key = f"{client}:{request.url.path}"
+        count = _rate_hits.get(key, 0) + 1
+        _rate_hits[key] = count
+        if count > limit:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Please retry shortly."},
+            )
+        return await call_next(request)
+
     # Include routers
     app.include_router(user_router, prefix="/api/users", tags=["users"])
     app.include_router(data_router, prefix="/api/data", tags=["data"])
     app.include_router(rule_router, prefix="/api/rules", tags=["rules"])
     app.include_router(customer_router, prefix="/api/customers", tags=["customers"])
+    app.include_router(agent_router, prefix="/api", tags=["agent"])
 
     @app.get("/")
     async def root():
