@@ -35,31 +35,15 @@ import { getUser, type User, type UserType } from "~/lib/auth"
 
 const getMenuItemsForUserType = (userType: UserType) => {
     const baseItems: any[] = [
-        /*
         {
-            title: "Settings",
-            url: "#",
-            icon: Settings2,
+            title: "AI Agent",
+            url: "/agent",
+            icon: Bot,
             items: [
-                {
-                    title: "General",
-                    url: "#",
-                },
-                {
-                    title: "Team",
-                    url: "#",
-                },
-                {
-                    title: "Billing",
-                    url: "#",
-                },
-                {
-                    title: "Limits",
-                    url: "#",
-                },
+                { title: "Chat", url: "/agent" },
+                { title: "Prompt Editor", url: "/agent?tab=prompts" },
             ],
         },
-        */
     ]
 
     const userTypeItems: Record<UserType, typeof baseItems> = {
@@ -70,16 +54,12 @@ const getMenuItemsForUserType = (userType: UserType) => {
                 icon: FileText,
                 items: [
                     {
-                        title: "Contracts",
+                        title: "Regulatory Notices",
                         url: "/legal",
                     },
                     {
-                        title: "Policies",
-                        url: "#",
-                    },
-                    {
-                        title: "Archive",
-                        url: "#",
+                        title: "Document Ingest",
+                        url: "/legal/ingest",
                     },
                 ],
             },
@@ -122,12 +102,8 @@ const getMenuItemsForUserType = (userType: UserType) => {
                         url: "/frontoffice",
                     },
                     {
-                        title: "Users",
-                        url: "#",
-                    },
-                    {
-                        title: "Reports",
-                        url: "#",
+                        title: "Client Verification",
+                        url: "/frontoffice/client-verification",
                     },
                 ],
             },
