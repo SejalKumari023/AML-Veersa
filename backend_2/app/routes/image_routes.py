@@ -52,6 +52,12 @@ async def upload_image(file: UploadFile = File(...)):
         
         # Read and validate image
         content = await file.read()
+
+        # Enforce size limit (default 20 MB for images)
+        max_bytes = int(os.getenv("MAX_IMAGE_SIZE", str(20 * 1024 * 1024)))
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Image too large. Max size: {max_bytes // (1024*1024)} MB")
+
         try:
             image = Image.open(io.BytesIO(content))
             width, height = image.size

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import os
 import asyncio
+import re
 from datetime import datetime
 
 from app.database.connection import Database
@@ -58,6 +59,7 @@ class DocumentAnalysis(BaseModel):
     metadata: Dict[str, Any] = {}
     validation_report: Optional[Dict[str, Any]] = None
     processed_files: Optional[Dict[str, str]] = None
+    error_message: Optional[str] = None
 
 
 class DocumentUploadResponse(BaseModel):
@@ -171,7 +173,11 @@ async def process_document_task(
         logger.info(f"Validation complete: {validation_report['summary']}")
 
         # Step 4: Calculate risk score based on validation issues
-        risk_score = calculate_risk_score(validation_report)
+        risk_score = calculate_risk_score(
+            validation_report,
+            doc_processing_result,
+            filename=filename,
+        )
 
         # Step 5: Format findings for frontend
         findings = format_findings(validation_report)
@@ -215,7 +221,11 @@ async def process_document_task(
         )
 
 
-def calculate_risk_score(validation_report: Dict[str, Any]) -> float:
+def calculate_risk_score(
+    validation_report: Dict[str, Any],
+    processing_result: Optional[DocumentProcessingResult] = None,
+    filename: str = "",
+) -> float:
     """
     Calculate risk score based on validation issues.
 
@@ -232,13 +242,106 @@ def calculate_risk_score(validation_report: Dict[str, Any]) -> float:
     warnings = summary.get("warnings", 0)
     info = summary.get("info", 0)
 
-    # Calculate weighted score
+    # Calculate weighted score from validation
     weighted_issues = (
         (errors * error_weight) + (warnings * warning_weight) + (info * info_weight)
     )
+    validation_score = min(weighted_issues / 12.0, 1.0)
 
-    # Normalize to 0-1 range (assuming max 20 weighted issues = high risk)
-    risk_score = min(weighted_issues / 20.0, 1.0)
+    # Add content-based risk signals so suspicious docs don't collapse to "low risk"
+    extracted_text = ""
+    if processing_result and getattr(processing_result, "dict", None):
+        extracted_text = str(processing_result.dict.get("parsed_text", "")).lower()
+
+    suspicious_patterns = [
+        r"\bcash\b",
+        r"\boffshore\b",
+        r"\bshell\s+company\b",
+        r"\bbeneficial owner\b",
+        r"\bthird[-\s]?party\b",
+        r"\bstructuring\b",
+        r"\bsmurfing\b",
+        r"\bmixing\b",
+        r"\bcrypto\b",
+        r"\bwire transfer\b",
+        r"\bno invoice\b",
+        r"\burgent transfer\b",
+        r"\bhigh[-\s]?risk jurisdiction\b",
+        r"\bsanction(ed|s)?\b",
+        r"\bofac\b",
+        r"\bbvi\b",
+        r"\bcayman\b",
+        r"\bky\b",
+        r"\blayering\b",
+    ]
+    suspicious_hits = sum(
+        1 for pattern in suspicious_patterns if re.search(pattern, extracted_text)
+    )
+    content_score = min(suspicious_hits / 6.0, 1.0)
+
+    critical_patterns = [
+        r"\bofac\b",
+        r"\boffshore\b",
+        r"\bsmurfing\b",
+        r"\blayering\b",
+        r"\bstructuring\b",
+        r"\bshell\s+company\b",
+        r"\bhigh[-\s]?risk jurisdiction\b",
+        r"\bsanction(ed|s)?\b",
+    ]
+    critical_hits = sum(
+        1 for pattern in critical_patterns if re.search(pattern, extracted_text)
+    )
+
+    # ID-specific fraud signals (important for front-office identity verification)
+    lowered_filename = (filename or "").lower()
+    is_identity_doc = any(
+        token in lowered_filename
+        for token in ("id", "identity", "passport", "license", "driver")
+    ) or any(
+        token in extracted_text
+        for token in ("passport", "identity card", "national id", "dob", "expiry")
+    )
+
+    id_suspicious_patterns = [
+        r"\bexpires?\s*:\s*never\b",
+        r"\bsystem\s+override\b",
+        r"\bauthentication\s+not\s+required\b",
+        r"\bvip\b",
+        r"\bdiplomat\b",
+        r"\bthe\s+boss\b",
+        r"\bsecure\s+authentication\s+not\s+required\b",
+        r"\b9{6,}\b",  # very long repeated numeric runs
+        r"\bdob\s*:\s*0?1[\/\-\s]0?1[\/\-\s]1900\b",
+    ]
+    id_suspicious_hits = sum(
+        1 for pattern in id_suspicious_patterns if re.search(pattern, extracted_text)
+    )
+
+    # If OCR/text extraction is too weak, mark as medium uncertainty risk.
+    if len(extracted_text.strip()) < 80:
+        extraction_uncertainty = 0.45
+    else:
+        extraction_uncertainty = 0.0
+
+    # Blend: content signals + validation + extraction uncertainty
+    risk_score = max(
+        extraction_uncertainty,
+        min((validation_score * 0.45) + (content_score * 0.55), 1.0),
+    )
+
+    # Force high-risk when multiple critical AML indicators are present.
+    if critical_hits >= 2:
+        risk_score = max(risk_score, 0.82)
+    elif critical_hits == 1 and suspicious_hits >= 3:
+        risk_score = max(risk_score, 0.70)
+
+    # Force high-risk for suspicious identity documents when multiple forged-ID signals are present.
+    if is_identity_doc:
+        if id_suspicious_hits >= 2:
+            risk_score = max(risk_score, 0.86)
+        elif id_suspicious_hits == 1:
+            risk_score = max(risk_score, 0.62)
 
     return round(risk_score, 3)
 
@@ -292,6 +395,11 @@ async def upload_document(
 
         # Read file content
         content = await file.read()
+
+        # Enforce size limit (default 50 MB)
+        max_bytes = int(os.getenv("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))
+        if len(content) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"File too large. Max size: {max_bytes // (1024*1024)} MB")
 
         # Save uploaded file
         file_path = UPLOAD_DIR / file.filename
