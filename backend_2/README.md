@@ -1,199 +1,112 @@
-# Backend 2 - Image Authenticity Verification API
+# Backend 2 — Document & Image Corroboration Service
 
-Backend service for comprehensive image authenticity verification, AI detection, tampering analysis, and reverse image search.
+FastAPI service for automated KYC document verification: OCR extraction, tampering detection, AI-generated image detection, forensic analysis, risk scoring, and the document corroboration agent.
 
-## Features
+## Quick Start
 
-### 🔍 Authenticity Verification
+```bash
+# Install dependencies (uses uv)
+uv sync
+# or: pip install -r requirements.txt
 
-Detect stolen images using reverse image search via **SerpAPI Google Reverse Image Search**. The system:
+# Start server (default port 5002)
+python app.py
 
--   Automatically uploads images to Imgur for public URL generation
--   Performs web-wide reverse image search to find duplicate instances
--   Identifies potential copyright infringement and stolen content
--   Provides match confidence scores and source links
--   Flags images as potentially stolen if found on other websites
+# With hot-reload for development
+uvicorn app:create_app --factory --reload --host 0.0.0.0 --port 5002
+```
 
-**Integration:** SerpAPI Google Reverse Image Search API
+## Environment Variables
 
-### 🤖 AI-Generated Detection
-
-Identify AI-generated or synthetic images using **Sightengine API**. The system:
-
--   Analyzes images for AI generation indicators using advanced ML models
--   Provides probability scores (0.0 - 1.0) for AI generation likelihood
--   Detects common AI artifacts like:
-    -   Unnatural textures and patterns
-    -   Inconsistent lighting or shadows
-    -   Unusual artifacts or distortions
-    -   Over-perfect or uniform elements
-    -   Unnatural perspective or proportions
--   High accuracy detection with 90%+ confidence for Sightengine results
-
-**Integration:** Sightengine API (genai model)
-
-### 🔎 Tampering Detection
-
-Analyze metadata and pixel-level anomalies to detect image manipulation:
-
--   **Metadata Analysis:**
-    -   EXIF data extraction and validation
-    -   GPS location verification
-    -   Camera information cross-checking
-    -   Timestamp consistency analysis
-    -   Software editing detection
--   **Pixel-Level Analysis:**
-    -   Copy-move forgery detection
-    -   Splicing detection
-    -   Resampling detection
-    -   Compression artifacts analysis
-    -   Statistical anomaly detection
-
-**Technologies:** PIL, scikit-image, OpenCV, EXIF analysis
-
-### 🔬 Forensic Analysis
-
-Deep inspection for manipulation indicators using multiple forensic techniques:
-
--   Error Level Analysis (ELA)
--   JPEG compression analysis
--   Noise pattern analysis
--   Color channel consistency checks
--   Blocking artifact detection
--   Manipulation probability scoring
-
-**Technologies:** NumPy, scikit-image, image processing algorithms
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5002` | Server port |
+| `GROQ_API_KEY` | — | **Required** — Groq API key |
+| `GROQ_API_BASE` | `https://api.groq.com/openai/v1` | LLM API base URL |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | LLM model |
+| `GOOGLE_CLOUD_VISION_ENABLED` | `true` | Enable Google Vision OCR |
+| `GOOGLE_VISION_API_KEY` | — | Google Cloud Vision API key |
+| `SERPAPI_API_KEY` | — | Optional — reverse image search |
+| `SIGHTENGINE_API_USER` | — | Optional — AI image detection |
+| `SIGHTENGINE_API_SECRET` | — | Optional — AI image detection |
+| `IMGUR_CLIENT_ID` | — | Optional — for reverse search image hosting |
+| `MAX_CONTENT_LENGTH` | `52428800` | Max document upload size (bytes, default 50 MB) |
+| `MAX_IMAGE_SIZE` | `20971520` | Max image upload size (bytes, default 20 MB) |
+| `CORS_ORIGINS` | `*` | Allowed CORS origins |
 
 ## API Endpoints
 
-### Image Upload
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Health check |
+| `/health` | GET | Detailed health |
+| `/api/documents/upload` | POST | Upload document (PDF, DOC, DOCX) |
+| `/api/documents/analysis` | GET | List all document analyses |
+| `/api/documents/analysis/{id}` | GET | Get document analysis |
+| `/api/documents/analysis/{id}` | DELETE | Delete document |
+| `/api/documents/download/{id}/{format}` | GET | Download report (markdown/json) |
+| `/api/documents/report/{id}` | GET | Persona report (executive/compliance/legal/audit/all) |
+| `/api/images/upload` | POST | Upload image (JPG, PNG, BMP, TIFF) |
+| `/api/images/analysis` | GET | List all image analyses |
+| `/api/images/analysis/{id}` | GET | Get image analysis |
+| `/api/images/verify/{id}` | POST | Full authenticity verification |
+| `/api/agent` | POST | Chat with document agent |
+| `/api/prompts` | GET | List agent prompts |
+| `/api/prompts/{name}` | PUT | Update agent prompt |
+
+Full interactive docs: **http://localhost:5002/docs**
+
+## Architecture
 
 ```
-POST /api/images/upload
+app/
+├── __init__.py         # FastAPI app factory, CORS, router registration, prompt seeding
+├── app.py              # Entry point (uvicorn)
+├── config.py           # Environment-based configuration
+├── agents/
+│   ├── doc_agent.py    # LangGraph ReAct agent for document corroboration
+│   └── doc_tools.py    # 10 @tool functions wrapping analysis services
+├── database/
+│   ├── connection.py   # In-memory storage (documents, images)
+│   └── prompt_store.py # In-memory prompt store
+├── models/             # Pydantic models for documents and images
+├── routes/
+│   ├── agent_routes.py    # /api/agent, /api/prompts
+│   ├── document_routes.py # /api/documents/*
+│   └── image_routes.py    # /api/images/*
+└── services/
+    ├── process_document.py           # Docling OCR + content extraction
+    ├── validate_document.py          # Structure & format validation
+    ├── ai_detection_service.py       # AI-generated image detection
+    ├── forensic_analysis_service.py  # ELA, noise, JPEG artifact analysis
+    ├── tampering_detection_service.py # Copy-move, splicing detection
+    ├── reverse_search_service.py     # SerpAPI reverse image search
+    └── report_generation_service.py  # Multi-persona report generation
 ```
 
-Upload an image for analysis. Returns image ID for subsequent verification.
+## Document Analysis Features
 
-### Image Analysis
+### Document Processing (PDF/DOC/DOCX)
+- **OCR**: Google Cloud Vision + Docling fallback
+- **Content extraction**: Text, tables, structured sections
+- **Format validation**: Missing sections, date formats, required fields
+- **Risk scoring**: Low / Medium / High with contributing factors
 
+### Image Forensics
+- **Tampering detection**: Copy-move forgery, splicing, resampling, compression artifact analysis
+- **AI generation detection**: Sightengine API (requires key) or heuristic fallback
+- **Forensic analysis**: Error Level Analysis (ELA), noise pattern analysis, JPEG quality checks
+- **Reverse image search**: SerpAPI Google reverse search (requires key) or metadata fallback
+
+## Sample Document for Testing
+
+The repo includes a sample scanned PDF for demo purposes:
 ```
-GET /api/images/analysis/{image_id}
-```
-
-Get comprehensive analysis results for an uploaded image.
-
-### Verify Authenticity
-
-```
-POST /api/images/verify/{image_id}
-```
-
-Perform complete authenticity verification including:
-
--   AI generation detection
--   Tampering detection
--   Forensic analysis
--   Metadata analysis
-
-Returns authenticity score (0.0 - 1.0) with detailed findings.
-
-### Reverse Image Search
-
-```
-POST /api/images/reverse-search/{image_id}?limit=10
+backend_2/uploads/Swiss_Home_Purchase_Agreement_Scanned_Noise_forparticipants.pdf
 ```
 
-Search for duplicate/stolen images on the web. Returns:
-
--   Web matches with source URLs
--   Match confidence scores
--   Stolen image indicators
--   Similarity rankings
-
-## Configuration
-
-### Required Environment Variables
-
-#### SerpAPI (Reverse Image Search)
-
+Upload it via the frontend at `/frontoffice/client-verification` or directly:
 ```bash
-SERPAPI_API_KEY=your_serpapi_key
+curl -X POST http://localhost:5002/api/documents/upload \
+  -F "file=@uploads/Swiss_Home_Purchase_Agreement_Scanned_Noise_forparticipants.pdf"
 ```
-
-Get your key at: https://serpapi.com/
-
-#### Sightengine (AI Detection)
-
-```bash
-SIGHTENGINE_API_USER=your_user_id
-SIGHTENGINE_API_SECRET=your_secret
-```
-
-Get your credentials at: https://sightengine.com/
-
-### Optional Configuration
-
-```bash
-GROQ_API_KEY=your_groq_key  # Optional, secondary AI detection
-```
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-```
-
-## Running
-
-```bash
-python app.py
-```
-
-Server runs on `http://0.0.0.0:8000` by default.
-
-## Technical Stack
-
--   **Framework:** FastAPI
--   **Image Processing:** PIL, OpenCV, scikit-image
--   **AI Detection:** Sightengine API
--   **Reverse Search:** SerpAPI
--   **Storage:** In-memory database (configurable)
--   **File Storage:** Local disk storage
-
-## Response Structure
-
-### Verification Response
-
-```json
-{
-  "authenticity_score": 0.85,
-  "tampering_detected": false,
-  "ai_generated_probability": 0.15,
-  "metadata_analysis": {...},
-  "pixel_analysis": {...},
-  "forensic_analysis": {...},
-  "ai_detection": {...}
-}
-```
-
-### Reverse Search Response
-
-```json
-{
-  "matches_found": 3,
-  "similar_images": [...],
-  "potentially_stolen": true,
-  "stolen_confidence": 0.75,
-  "stolen_indicators": [...],
-  "web_search": {...}
-}
-```
-
-## Notes
-
--   Images are temporarily uploaded to Imgur for reverse image search (public URL required)
--   All analyses run asynchronously for better performance
--   Results are cached in the database for quick retrieval
--   Multiple detection methods are combined for higher accuracy
-
-`uv run python -m uvicorn app:create_app --factory --reload --port 5002`
