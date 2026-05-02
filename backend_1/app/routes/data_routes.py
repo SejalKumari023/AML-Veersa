@@ -30,6 +30,40 @@ async def ingest_to_neo4j(request: Request, transaction: Transaction):
         # Don't raise - we don't want Neo4j failures to block transaction creation
 
 
+def derive_alert_severity(transaction: Transaction, rule_text: str = "") -> str:
+    """
+    Derive alert severity dynamically to avoid monotonous "medium"-only alerts.
+    """
+    text = (rule_text or "").lower()
+    amount = float(transaction.amount or 0)
+    risk = (transaction.customer_risk_rating or "").lower()
+    pep = bool(transaction.customer_is_pep)
+    sanctions = (transaction.sanctions_screening or "").lower()
+
+    high_hit = (
+        amount >= 100000
+        or "sanction" in text
+        or "terror" in text
+        or "str" in text
+        or sanctions in {"hit", "true_positive", "positive", "potential_match"}
+        or (pep and risk == "high")
+    )
+    if high_hit:
+        return "high"
+
+    low_hit = (
+        amount < 2500
+        and risk in {"low", "medium"}
+        and not pep
+        and "sanction" not in text
+        and "terror" not in text
+    )
+    if low_hit:
+        return "low"
+
+    return "medium"
+
+
 @data_router.get("/transactions", response_model=List[Transaction])
 async def get_transactions(limit: int = 1000, offset: int = 0):
     """Get all transactions"""
@@ -474,12 +508,13 @@ async def run_rules_on_transactions(
 
                         # Create alert if rule was triggered
                         if triggered:
+                            severity = derive_alert_severity(transaction, rule_text)
                             alert_data = {
                                 "id": str(uuid.uuid4()),
                                 "transaction_id": transaction.transaction_id,
                                 "alert_type": f"RULE_VIOLATION",
-                                "severity": "medium",  # Default severity, could be configurable per rule
-                                "message": f"Rule '{rule_id_current}' triggered: {rule_text[:200]}",
+                                "severity": severity,
+                                "message": f"[{severity.upper()}] Rule '{rule_id_current}' triggered: {rule_text[:200]}",
                                 "timestamp": datetime.now(),
                                 "status": "active",
                             }
@@ -593,12 +628,13 @@ async def run_rules_on_single_transaction(transaction_id: str):
 
                 # Create alert if rule was triggered
                 if triggered:
+                    severity = derive_alert_severity(transaction, rule_text)
                     alert_data = {
                         "id": str(uuid.uuid4()),
                         "transaction_id": transaction.transaction_id,
                         "alert_type": f"RULE_VIOLATION",
-                        "severity": "medium",
-                        "message": f"Rule '{rule_id}' triggered: {rule_text[:200]}",
+                        "severity": severity,
+                        "message": f"[{severity.upper()}] Rule '{rule_id}' triggered: {rule_text[:200]}",
                         "timestamp": datetime.now(),
                         "status": "active",
                     }
@@ -664,22 +700,22 @@ async def run_rule_on_single_transaction(transaction_id: str, rule_id: str):
 
         transaction = Transaction(**transaction_data)
 
-        # Fetch all rules
-        rules = await PostgresDatabase.get_rule(rule_id=rule_id)
-        if not rules:
+        # Fetch the target rule
+        rule = await PostgresDatabase.get_rule(rule_id=rule_id)
+        if not rule:
             return {
-                "message": "No rules found in database",
+                "message": "Rule not found in database",
                 "transaction_id": transaction_id,
                 "rules_processed": 0,
                 "alerts_created": 0,
+                "triggered_rules": [],
             }
 
-        # Process each rule
+        # Process the selected rule
         alerts_created = 0
         rules_processed = 0
         triggered_rules = []
         errors = []
-        rule = rules
         try:
             rule_id = rule["id"]
             function_code = rule["function_code"]
@@ -696,21 +732,33 @@ async def run_rule_on_single_transaction(transaction_id: str, rule_id: str):
                 error_msg = f"Failed to compile rule {rule_id}: {str(e)}"
                 logger.error(error_msg)
                 errors.append(error_msg)
+                apply_rule = None
             if not apply_rule:
                 rules_processed += 1
-                return
+                response = {
+                    "message": "Rule execution failed for transaction",
+                    "transaction_id": transaction_id,
+                    "rules_processed": rules_processed,
+                    "total_rules": 1,
+                    "alerts_created": alerts_created,
+                    "triggered_rules": triggered_rules,
+                    "errors": errors[:10],
+                    "total_errors": len(errors),
+                }
+                return response
 
             # Execute the rule using helper function
             triggered = apply_rule_to_transaction(apply_rule, transaction)
 
             # Create alert if rule was triggered
             if triggered:
+                severity = derive_alert_severity(transaction, rule_text)
                 alert_data = {
                     "id": str(uuid.uuid4()),
                     "transaction_id": transaction.transaction_id,
                     "alert_type": f"RULE_VIOLATION",
-                    "severity": "medium",
-                    "message": f"Rule '{rule_id}' triggered: {rule_text[:200]}",
+                    "severity": severity,
+                    "message": f"[{severity.upper()}] Rule '{rule_id}' triggered: {rule_text[:200]}",
                     "timestamp": datetime.now(),
                     "status": "active",
                 }
@@ -739,7 +787,7 @@ async def run_rule_on_single_transaction(transaction_id: str, rule_id: str):
             "message": "Rules execution completed for transaction",
             "transaction_id": transaction_id,
             "rules_processed": rules_processed,
-            "total_rules": len(rules),
+            "total_rules": 1,
             "alerts_created": alerts_created,
             "triggered_rules": triggered_rules,
         }

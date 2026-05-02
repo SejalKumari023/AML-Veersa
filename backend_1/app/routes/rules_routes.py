@@ -84,3 +84,37 @@ async def get_rule(rule_id: str):
     except Exception as e:
         logger.error(f"Error retrieving rule {rule_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class RuleUpdateInput(BaseModel):
+    rule_text: Optional[str] = None
+    function_code: Optional[str] = None
+    explanation: Optional[str] = None
+    attributes_used: Optional[List[str]] = None
+
+
+@rule_router.put("/{rule_id}")
+async def update_rule(rule_id: str, update: RuleUpdateInput):
+    """Update an existing rule"""
+    try:
+        exists = await PostgresDatabase.get_rule(rule_id)
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Rule not found")
+
+        updated = await PostgresDatabase.update_rule(
+            rule_id=rule_id,
+            rule_text=update.rule_text,
+            function_code=update.function_code,
+            explanation=update.explanation,
+            attributes_used=update.attributes_used,
+        )
+        if not updated:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        rule = await PostgresDatabase.get_rule(rule_id)
+        return {"rule": rule}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating rule {rule_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

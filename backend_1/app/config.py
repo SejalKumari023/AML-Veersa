@@ -11,8 +11,9 @@ PORT = int(os.getenv("PORT", 5000))
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # CORS configuration
+cors_origins = os.getenv("CORS_ORIGINS", "*")
 CORS_CONFIG: Dict[str, Any] = {
-    "origins": ["*"],
+    "origins": [o.strip() for o in cors_origins.split(",")] if cors_origins else ["*"],
     "methods": ["*"],
     "headers": ["*"],
 }
