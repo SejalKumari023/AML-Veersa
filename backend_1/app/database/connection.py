@@ -156,15 +156,25 @@ class PostgresDatabase:
             db_user = os.getenv("POSTGRES_USER", "aml")
             db_password = os.getenv("POSTGRES_PASSWORD", "aml")
 
-            cls.pool = await asyncpg.create_pool(
-                host=db_host,
-                port=db_port,
-                database=db_name,
-                user=db_user,
-                password=db_password,
-                min_size=1,
-                max_size=10,
-            )
+            database_url = os.getenv("DATABASE_URL")
+            if database_url:
+                cls.pool = await asyncpg.create_pool(
+                    database_url,
+                    min_size=1,
+                    max_size=10,
+                    ssl="require",
+                )
+            else:
+                cls.pool = await asyncpg.create_pool(
+                    host=db_host,
+                    port=db_port,
+                    database=db_name,
+                    user=db_user,
+                    password=db_password,
+                    min_size=1,
+                    max_size=10,
+                    ssl="require",
+                )
             logger.info("PostgreSQL connection pool initialized")
 
             # Create rules table if it doesn't exist

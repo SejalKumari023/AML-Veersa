@@ -206,7 +206,7 @@ class Database:
         db_url = os.getenv("DATABASE_URL", "").strip()
 
         if db_url:
-            cls.pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=10)
+            cls.pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=10, ssl="require")
         else:
             cls.pool = await asyncpg.create_pool(
                 host=db_host,
@@ -216,6 +216,7 @@ class Database:
                 password=db_password,
                 min_size=1,
                 max_size=10,
+                ssl="require",
             )
 
         async with cls.pool.acquire() as conn:
