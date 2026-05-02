@@ -6,7 +6,6 @@ services:
     dockerContext: ./backend_1
     plan: free
     healthCheckPath: /health
-    port: 5001
     envVars:
       - key: PORT
         value: 5001
@@ -50,7 +49,6 @@ services:
     dockerContext: ./backend_2
     plan: free
     healthCheckPath: /health
-    port: 5002
     envVars:
       - key: PORT
         value: 5002
