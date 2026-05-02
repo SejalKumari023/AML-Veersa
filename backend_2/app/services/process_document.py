@@ -6,6 +6,8 @@ from enum import Enum
 import PyPDF2
 import sys
 import os
+import requests
+import base64
 
 import yaml
 # Temporarily disabled docling imports to test Google Cloud Vision API
@@ -26,7 +28,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Any
 
 from app.utils.logging_config import setup_logging
-from app.config import GOOGLE_CLOUD_VISION_ENABLED, GOOGLE_APPLICATION_CREDENTIALS, GROQ_API_KEY
+from app.config import (
+    GOOGLE_CLOUD_VISION_ENABLED,
+    GOOGLE_APPLICATION_CREDENTIALS,
+    GOOGLE_VISION_API_KEY,
+    GROQ_API_KEY,
+)
 
 _log = setup_logging(level="INFO")
 
@@ -72,15 +79,77 @@ def process_pdf_with_google_vision(pdf_path: Union[str, Path]) -> Dict[str, Any]
         
         _log.info(f"Reading PDF file: {source_path}")
         
-        # Initialize Google Vision client
+        # Initialize Google Vision client. If ADC/service account is missing, fall back to API key REST mode.
+        client = None
+        use_api_key_mode = False
         try:
             _log.info("Initializing Google Cloud Vision client...")
             client = vision.ImageAnnotatorClient()
             _log.info("Google Vision client initialized successfully")
         except Exception as init_error:
-            _log.error(f"Google Vision client initialization error: {init_error}", exc_info=True)
-            raise
+            if GOOGLE_VISION_API_KEY:
+                _log.warning(
+                    f"Vision client init failed ({init_error}). Falling back to API key REST mode."
+                )
+                use_api_key_mode = True
+            else:
+                _log.error(f"Google Vision client initialization error: {init_error}", exc_info=True)
+                raise
         
+        # In API key mode, try a fast OCR pass on first page, then fall back safely.
+        if use_api_key_mode:
+            try:
+                from pdf2image import convert_from_path
+                import io
+
+                images = convert_from_path(
+                    str(source_path),
+                    dpi=200,
+                    first_page=1,
+                    last_page=1,
+                )
+                if images:
+                    buffered = io.BytesIO()
+                    images[0].save(buffered, format="PNG")
+                    image_content = buffered.getvalue()
+                    payload = {
+                        "requests": [
+                            {
+                                "image": {
+                                    "content": base64.b64encode(image_content).decode("utf-8")
+                                },
+                                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                            }
+                        ]
+                    }
+                    response = requests.post(
+                        f"https://vision.googleapis.com/v1/images:annotate?key={GOOGLE_VISION_API_KEY}",
+                        json=payload,
+                        timeout=30,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    annotations = data.get("responses", [{}])[0]
+                    if "error" in annotations:
+                        raise Exception(
+                            annotations["error"].get("message", "Vision API error")
+                        )
+                    full = annotations.get("fullTextAnnotation", {})
+                    page_text = (full.get("text") or "").strip()
+                    if page_text:
+                        return {
+                            "full_text": page_text,
+                            "text_annotations": annotations.get("textAnnotations", [])[1:50],
+                            "text_count": len(annotations.get("textAnnotations", [])),
+                            "structured_data": [],
+                            "source": "google_vision_api_key",
+                        }
+            except Exception as key_mode_error:
+                _log.warning(
+                    f"API key OCR fast path failed ({key_mode_error}). Using local fallback."
+                )
+            return process_pdf_locally(source_path)
+
         # Try to extract text first (for text-based PDFs)
         pdf_text = ""
         text_annotations = []
@@ -260,6 +329,45 @@ def process_pdf_with_google_vision(pdf_path: Union[str, Path]) -> Dict[str, Any]
     except Exception as e:
         _log.error(f"Google Vision API error: {e}", exc_info=True)
         raise Exception(f"Google Vision API failed: {str(e)}")
+
+
+def process_pdf_locally(pdf_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Fallback PDF processing when Google Vision is unavailable.
+    Uses PyPDF2 text extraction to keep the pipeline functional offline.
+    """
+    source_path = Path(pdf_path)
+    if not source_path.exists():
+        raise Exception(f"PDF file not found: {pdf_path}")
+
+    _log.info(f"Using local PDF extraction fallback for: {source_path}")
+
+    pages_text: List[str] = []
+    with source_path.open("rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        for i, page in enumerate(reader.pages, start=1):
+            try:
+                text = (page.extract_text() or "").strip()
+            except Exception:
+                text = ""
+            if text:
+                pages_text.append(f"--- Page {i} ---\n{text}")
+
+    full_text = "\n\n".join(pages_text).strip()
+    if not full_text:
+        # Keep the flow functional even for scan-only PDFs without OCR credentials.
+        full_text = (
+            "No extractable text was found in this PDF with local parsing. "
+            "Upload succeeded, but OCR credentials are not configured."
+        )
+
+    return {
+        "full_text": full_text,
+        "text_annotations": [],
+        "text_count": 0,
+        "structured_data": [],
+        "source": "local_pypdf2_fallback",
+    }
 
 
 def detect_heading(text: str, y_position: Optional[float] = None, prev_y: Optional[float] = None) -> bool:
@@ -489,7 +597,7 @@ def parse_google_vision_response(vision_response: Dict[str, Any]) -> Tuple[str, 
         text_annotations = vision_response.get("text_annotations", [])
         
         if not full_text and not text_annotations:
-            raise Exception("No text detected by Google Vision API")
+            full_text = "No text was detected in the document."
         
         # Send extracted text to Groq API for markdown conversion
         _log.info("Sending extracted text to Groq API for markdown conversion...")
@@ -726,7 +834,9 @@ class DocumentProcessor:
         
         # Check if Google Vision is enabled
         if not GOOGLE_CLOUD_VISION_ENABLED:
-            raise Exception("Google Cloud Vision is disabled. Enable GOOGLE_CLOUD_VISION_ENABLED in config.")
+            _log.warning(
+                "Google Cloud Vision is disabled. Falling back to local PDF extraction."
+            )
         
         try:
             source_path = Path(source) if not isinstance(source, Path) else source
@@ -738,9 +848,18 @@ class DocumentProcessor:
             # Determine output filename
             stem = source_path.stem
             
-            # Process PDF with Google Cloud Vision
-            _log.info(f"Sending PDF file to Google Cloud Vision API: {source_path}")
-            vision_response = process_pdf_with_google_vision(source_path)
+            # Process PDF with Google Cloud Vision (fallback to local extraction if unavailable)
+            if GOOGLE_CLOUD_VISION_ENABLED:
+                try:
+                    _log.info(f"Sending PDF file to Google Cloud Vision API: {source_path}")
+                    vision_response = process_pdf_with_google_vision(source_path)
+                except Exception as vision_error:
+                    _log.warning(
+                        f"Google Vision failed ({vision_error}). Falling back to local extraction."
+                    )
+                    vision_response = process_pdf_locally(source_path)
+            else:
+                vision_response = process_pdf_locally(source_path)
             
             # Parse Google Vision response (format as markdown/JSON)
             markdown_content, json_content = parse_google_vision_response(vision_response)
@@ -773,7 +892,7 @@ class DocumentProcessor:
                 output_paths["yaml"] = str(yaml_path_absolute)
                 _log.info(f"Saved YAML: {yaml_path_absolute} (absolute path: {output_paths['yaml']})")
             
-            _log.info(f"Successfully processed document with Google Cloud Vision API: {source}")
+            _log.info(f"Successfully processed document: {source}")
             
             return DocumentProcessingResult(
                 str(source),

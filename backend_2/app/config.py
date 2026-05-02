@@ -7,8 +7,9 @@ PORT = int(os.getenv("PORT", 5002))
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
 # CORS configuration
+cors_origins = os.getenv("CORS_ORIGINS", "*")
 CORS_CONFIG: Dict[str, Any] = {
-    "origins": ["*"],
+    "origins": [o.strip() for o in cors_origins.split(",")] if cors_origins else ["*"],
     "methods": ["*"],
     "headers": ["*"],
 }
@@ -18,6 +19,7 @@ MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
 # AI/ML API configuration
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_API_BASE = os.getenv("GROQ_API_BASE", "")
 
 # Sightengine API configuration for AI image detection
 SIGHTENGINE_API_USER = os.getenv("SIGHTENGINE_API_USER", "")
@@ -38,3 +40,12 @@ GOOGLE_CLOUD_VISION_ENABLED = (
     os.getenv("GOOGLE_CLOUD_VISION_ENABLED", "True").lower() == "true"
 )
 GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY", "")
+
+# PostgreSQL/Supabase configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")

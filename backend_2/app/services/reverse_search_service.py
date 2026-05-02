@@ -7,6 +7,7 @@ import io
 import logging
 import hashlib
 import base64
+import os
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import json
@@ -17,6 +18,7 @@ from app.database.connection import Database
 from app.config import SERPAPI_API_KEY, SERPAPI_ENABLED
 
 logger = logging.getLogger(__name__)
+IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID", "")
 
 # Import SerpAPI if available
 try:
@@ -256,8 +258,12 @@ class ReverseSearchService:
             image_b64 = base64.b64encode(image_content).decode('utf-8')
             
             # Prepare headers (Imgur allows anonymous uploads)
+            if not IMGUR_CLIENT_ID:
+                logger.warning("IMGUR_CLIENT_ID is not configured; cannot upload image for reverse search fallback")
+                return None
+
             headers = {
-                'Authorization': 'Client-ID 546c25a59c58ad7'  # Imgur's public client ID for anonymous uploads
+                "Authorization": f"Client-ID {IMGUR_CLIENT_ID}"
             }
             
             # Prepare data
@@ -630,4 +636,3 @@ def get_reverse_search_service() -> ReverseSearchService:
     if _reverse_search_service is None:
         _reverse_search_service = ReverseSearchService()
     return _reverse_search_service
-
