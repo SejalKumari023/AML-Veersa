@@ -158,11 +158,13 @@ class PostgresDatabase:
 
             database_url = os.getenv("DATABASE_URL")
             if database_url:
+                if "sslmode=" not in database_url:
+                    sep = "&" if "?" in database_url else "?"
+                    database_url = f"{database_url}{sep}sslmode=require"
                 cls.pool = await asyncpg.create_pool(
                     database_url,
                     min_size=1,
                     max_size=10,
-                    ssl="require",
                 )
             else:
                 cls.pool = await asyncpg.create_pool(
