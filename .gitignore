@@ -53,3 +53,20 @@ htmlcov/
 docker-compose.override.yml
 
 gcp-credentials.json
+
+# Runtime-generated artifacts
+backend_2/output/
+backend_2/uploads/images/
+
+# Python virtual environments (all locations)
+backend_1/.venv/
+backend_2/.venv/
+.venv/
+
+# Next.js build cache
+frontend/.next/
+
+# Test/coverage
+.pytest_cache/
+htmlcov/
+.coverage

@@ -1,12 +1,6 @@
-databases:
-  - name: aml-postgres
-    databaseName: aml
-    user: aml
-    plan: free
-
 services:
   - type: web
-    name: backend-1
+    name: aml-veersa-b1
     runtime: docker
     dockerfilePath: ./backend_1/Dockerfile
     dockerContext: ./backend_1
@@ -19,37 +13,37 @@ services:
         value: 0.0.0.0
       - key: DEBUG
         value: false
+      - key: DATABASE_URL
+        sync: false
       - key: POSTGRES_HOST
-        fromDatabase:
-          name: aml-postgres
-          property: host
+        sync: false
       - key: POSTGRES_PORT
-        fromDatabase:
-          name: aml-postgres
-          property: port
+        value: "5432"
       - key: POSTGRES_DB
-        fromDatabase:
-          name: aml-postgres
-          property: database
+        value: postgres
       - key: POSTGRES_USER
-        fromDatabase:
-          name: aml-postgres
-          property: user
+        value: postgres
       - key: POSTGRES_PASSWORD
-        fromDatabase:
-          name: aml-postgres
-          property: password
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: RATE_LIMIT_PER_MIN
+        value: "120"
       - key: NEO4J_URI
-        value: bolt://YOUR_NEO4J_HOST:7687   # Replace after deploying Neo4j separately
+        value: ""
       - key: NEO4J_USER
-        value: neo4j
+        value: ""
       - key: NEO4J_PASSWORD
-        sync: false   # Set this manually in the Render dashboard
+        value: ""
       - key: GROQ_API_KEY
-        sync: false   # Set this manually in the Render dashboard
+        sync: false
+      - key: GROQ_API_BASE
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
 
   - type: web
-    name: backend-2
+    name: aml-veersa-b2
     runtime: docker
     dockerfilePath: ./backend_2/Dockerfile
     dockerContext: ./backend_2
@@ -63,9 +57,31 @@ services:
         value: false
       - key: PYTHONUNBUFFERED
         value: 1
+      - key: DATABASE_URL
+        sync: false
+      - key: POSTGRES_HOST
+        sync: false
+      - key: POSTGRES_PORT
+        value: "5432"
+      - key: POSTGRES_DB
+        value: postgres
+      - key: POSTGRES_USER
+        value: postgres
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: RATE_LIMIT_PER_MIN
+        value: "120"
       - key: GROQ_API_KEY
-        sync: false   # Set this manually in the Render dashboard
-      - key: GCP_CREDENTIALS_BASE64
-        sync: false   # Set this manually in the Render dashboard
-      - key: GOOGLE_APPLICATION_CREDENTIALS
-        value: /app/gcp-credentials.json
+        sync: false
+      - key: GROQ_API_BASE
+        value: https://api.groq.com/openai/v1
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GOOGLE_VISION_API_KEY
+        sync: false
+      - key: GOOGLE_CLOUD_VISION_ENABLED
+        value: "true"
+      - key: IMGUR_CLIENT_ID
+        sync: false
