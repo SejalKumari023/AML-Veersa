@@ -3,6 +3,7 @@
 import { IconSquareRoundedX } from "@tabler/icons-react";
 import {
   AlertCircle,
+  Bot,
   CheckCircle2,
   Eye,
   FileText,
@@ -10,6 +11,8 @@ import {
   Plus,
   User,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "~/components/ui/sheet";
+import { AgentChat } from "~/components/agent/AgentChat";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
@@ -115,29 +118,33 @@ export default function CompliancePage() {
     },
   ]);
 
-  const [rules] = useState<Rule[]>([
-    {
-      id: "r1",
-      noticeId: "1",
-      name: "Enhanced AML Customer Verification",
-      description:
-        "Implement facial recognition and enhanced due diligence for high-risk jurisdictions",
-      createdDate: "2025-11-05",
-      status: "active",
-    },
-    {
-      id: "r2",
-      noticeId: "4",
-      name: "Interest Rate Benchmark Validation",
-      description:
-        "Validate all interest rate submissions against independent market data",
-      createdDate: "2025-10-20",
-      status: "active",
-    },
-  ]);
+  const [rules, setRules] = useState<Rule[]>([]);
+
+  useEffect(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
+    fetch(`${apiUrl}/rules/`)
+      .then((r) => r.json())
+      .then((data) => {
+        const loaded: Rule[] = (data.rules ?? data).map((r: any) => ({
+          id: r.id ?? r.rule_id,
+          noticeId: "",
+          name: r.rule_text?.slice(0, 60) ?? r.id,
+          description: r.explanation ?? r.rule_text ?? "",
+          createdDate: r.created_at?.split("T")[0] ?? new Date().toISOString().split("T")[0],
+          status: "active" as const,
+        }));
+        setRules(loaded);
+      })
+      .catch(() => {});
+  }, []);
 
   const [selectedNotice, setSelectedNotice] = useState<RuleNotice | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [showEditRuleModal, setShowEditRuleModal] = useState(false);
+  const [activeRule, setActiveRule] = useState<Rule | null>(null);
+  const [editRuleText, setEditRuleText] = useState("");
+  const [editRuleExplanation, setEditRuleExplanation] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -172,7 +179,75 @@ export default function CompliancePage() {
 
   const handleCreateRule = (noticeId: string) => {
     setError(null);
+    const notice = notices.find((n) => n.id === noticeId) ?? null;
+    setSelectedNotice(notice);
     setShowCreateModal(true);
+  };
+
+  const handleViewRule = (notice: RuleNotice) => {
+    const match =
+      rules.find((r) => r.id === notice.ruleId) ||
+      rules.find((r) => r.name === notice.ruleName) ||
+      null;
+    setActiveRule(match);
+    setShowRuleModal(true);
+  };
+
+  const handleEditRule = (notice: RuleNotice) => {
+    const match =
+      rules.find((r) => r.id === notice.ruleId) ||
+      rules.find((r) => r.name === notice.ruleName) ||
+      null;
+    if (!match) {
+      setError("No linked rule found for this notice.");
+      return;
+    }
+    setActiveRule(match);
+    setEditRuleText(match.name || "");
+    setEditRuleExplanation(match.description || "");
+    setShowEditRuleModal(true);
+  };
+
+  const refreshRules = async () => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
+    const data = await fetch(`${apiUrl}/rules/`).then((r) => r.json());
+    const loaded: Rule[] = (data.rules ?? data).map((r: any) => ({
+      id: r.id ?? r.rule_id,
+      noticeId: "",
+      name: r.rule_text?.slice(0, 60) ?? r.id,
+      description: r.explanation ?? r.rule_text ?? "",
+      createdDate:
+        r.created_at?.split("T")[0] ?? new Date().toISOString().split("T")[0],
+      status: "active" as const,
+    }));
+    setRules(loaded);
+  };
+
+  const submitRuleEdit = async () => {
+    if (!activeRule) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
+      const res = await fetch(`${apiUrl}/rules/${activeRule.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rule_text: editRuleText,
+          explanation: editRuleExplanation,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to update rule: ${res.statusText}`);
+      }
+      await refreshRules();
+      setShowEditRuleModal(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to update rule";
+      setError(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSubmitRule = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -226,6 +301,22 @@ export default function CompliancePage() {
           : notice,
       );
       setNotices(updatedNotices);
+
+      // Refresh real rules from API
+      fetch(`${apiUrl}/rules/`)
+        .then((r) => r.json())
+        .then((data) => {
+          const loaded: Rule[] = (data.rules ?? data).map((r: any) => ({
+            id: r.id ?? r.rule_id,
+            noticeId: "",
+            name: r.rule_text?.slice(0, 60) ?? r.id,
+            description: r.explanation ?? r.rule_text ?? "",
+            createdDate: r.created_at?.split("T")[0] ?? new Date().toISOString().split("T")[0],
+            status: "active" as const,
+          }));
+          setRules(loaded);
+        })
+        .catch(() => {});
 
       setShowCreateModal(false);
       setSelectedNotice(null);
@@ -455,11 +546,11 @@ export default function CompliancePage() {
                             </p>
                           </div>
                           <div className="flex gap-2 pt-2">
-                            <Button variant="outline" size="sm">
+                            <Button variant="outline" size="sm" onClick={() => handleViewRule(selectedNotice)}>
                               <Eye className="mr-2 size-4" />
                               View Rule
                             </Button>
-                            <Button variant="outline" size="sm">
+                            <Button variant="outline" size="sm" onClick={() => handleEditRule(selectedNotice)}>
                               <LinkIcon className="mr-2 size-4" />
                               Edit Rule
                             </Button>
@@ -498,7 +589,7 @@ export default function CompliancePage() {
                               <Plus className="mr-2 size-4" />
                               Create Rule
                             </Button>
-                            <Button variant="outline">
+                            <Button variant="outline" onClick={() => setSelectedNotice(selectedNotice)}>
                               <Eye className="mr-2 size-4" />
                               View Notice
                             </Button>
@@ -631,6 +722,70 @@ export default function CompliancePage() {
         </div>
       )}
 
+      {showRuleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <Card className="mx-4 w-full max-w-2xl">
+            <CardHeader>
+              <CardTitle>Rule Details</CardTitle>
+              <CardDescription>Linked rule for the selected notice</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {activeRule ? (
+                <>
+                  <p className="text-sm"><span className="font-semibold">Rule ID:</span> {activeRule.id}</p>
+                  <p className="text-sm"><span className="font-semibold">Name:</span> {activeRule.name}</p>
+                  <p className="text-sm"><span className="font-semibold">Description:</span> {activeRule.description}</p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">No stored rule matched this notice.</p>
+              )}
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => setShowRuleModal(false)}>Close</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {showEditRuleModal && activeRule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <Card className="mx-4 w-full max-w-2xl">
+            <CardHeader>
+              <CardTitle>Edit Rule</CardTitle>
+              <CardDescription>Update text and explanation for {activeRule.id}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium">Rule Text</label>
+                <textarea
+                  className="border-border bg-background mt-1 block w-full rounded-md border px-3 py-2 text-sm"
+                  rows={4}
+                  value={editRuleText}
+                  onChange={(e) => setEditRuleText(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Explanation</label>
+                <textarea
+                  className="border-border bg-background mt-1 block w-full rounded-md border px-3 py-2 text-sm"
+                  rows={4}
+                  value={editRuleExplanation}
+                  onChange={(e) => setEditRuleExplanation(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowEditRuleModal(false)} disabled={isSubmitting}>
+                  Cancel
+                </Button>
+                <Button onClick={submitRuleEdit} disabled={isSubmitting || !editRuleText.trim()}>
+                  {isSubmitting ? "Saving..." : "Save Changes"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* Multi-Step Loader */}
       <MultiStepLoader
         loadingStates={loadingStates}
@@ -648,6 +803,23 @@ export default function CompliancePage() {
           <IconSquareRoundedX className="h-10 w-10" />
         </button>
       )}
+
+      {/* AI Agent floating button */}
+      <Sheet>
+        <SheetTrigger asChild>
+          <button
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
+            aria-label="Open AI Agent"
+          >
+            <Bot className="size-4" />
+            AI Agent
+          </button>
+        </SheetTrigger>
+        <SheetContent side="right" className="w-[420px] p-0 flex flex-col">
+          <SheetTitle className="sr-only">AI Agent</SheetTitle>
+          <AgentChat title="Compliance Agent" defaultContext="Show me recent high-risk alerts" />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

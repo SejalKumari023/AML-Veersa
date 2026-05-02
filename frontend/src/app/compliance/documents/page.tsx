@@ -78,27 +78,26 @@ export default function DocumentsPage() {
         }
     }, [router])
 
-    // const fetchDocuments = useCallback(async () => {
-    //     try {
-    //         const response = await fetch(`${BACKEND_2_API_URL}/documents/analysis`)
-    //         if (!response.ok) {
-    //             throw new Error(`Failed to fetch documents: ${response.statusText}`)
-    //         }
-    //         const data = await response.json()
-    //         setDocuments(data)
-    //     } catch (err) {
-    //         console.error("Error fetching documents:", err)
-    //     } finally {
-    //         setIsLoading(false)
-    //     }
-    // }, [])
+    const fetchDocuments = useCallback(async () => {
+        try {
+            const response = await fetch(`${BACKEND_2_API_URL}/documents/analysis`)
+            if (!response.ok) {
+                throw new Error(`Failed to fetch documents: ${response.statusText}`)
+            }
+            const data = await response.json()
+            setDocuments(data)
+        } catch (err) {
+            console.error("Error fetching documents:", err)
+        } finally {
+            setIsLoading(false)
+        }
+    }, [])
 
-    // useEffect(() => {
-    //     // fetchDocuments()
-    //     // Poll for updates every 5 seconds
-    //     const interval = setInterval(fetchDocuments, 5000)
-    //     return () => clearInterval(interval)
-    // }, [fetchDocuments])
+    useEffect(() => {
+        void fetchDocuments()
+        const interval = setInterval(fetchDocuments, 5000)
+        return () => clearInterval(interval)
+    }, [fetchDocuments])
 
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0]

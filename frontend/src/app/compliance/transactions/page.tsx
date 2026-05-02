@@ -106,6 +106,8 @@ interface RuleExecutionResult {
   total_rules: number;
   alerts_created: number;
   triggered_rules: TriggeredRule[];
+  errors?: string[];
+  total_errors?: number;
 }
 
 export default function ComplianceTransactionsPage() {
@@ -274,7 +276,7 @@ export default function ComplianceTransactionsPage() {
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
       const response = await fetch(
-        `${apiUrl}/data/run-rule/${selectedTransaction.transaction_id}/${rule.id}`,
+        `${apiUrl}/data/run-rule/${encodeURIComponent(selectedTransaction.transaction_id)}/${encodeURIComponent(rule.id)}`,
         {
           method: "GET",
           headers: {
@@ -287,7 +289,10 @@ export default function ComplianceTransactionsPage() {
         throw new Error(`Failed to execute rule: ${response.statusText}`);
       }
 
-      const result: RuleExecutionResult = await response.json();
+      const result = (await response.json()) as RuleExecutionResult;
+      if (!result || typeof result !== "object") {
+        throw new Error("Rule execution returned an empty response");
+      }
       setRuleResult(result);
     } catch (err) {
       const errorMessage =
@@ -1158,6 +1163,19 @@ export default function ComplianceTransactionsPage() {
                                       ),
                                     )}
                                   </div>
+                                </div>
+                              )}
+
+                              {ruleResult.errors && ruleResult.errors.length > 0 && (
+                                <div className="space-y-2 border-t pt-2">
+                                  <p className="text-destructive text-sm font-semibold">
+                                    Execution Errors ({ruleResult.total_errors ?? ruleResult.errors.length})
+                                  </p>
+                                  <ul className="list-disc pl-5 text-xs text-muted-foreground">
+                                    {ruleResult.errors.slice(0, 3).map((err) => (
+                                      <li key={err}>{err}</li>
+                                    ))}
+                                  </ul>
                                 </div>
                               )}
                             </CardContent>
