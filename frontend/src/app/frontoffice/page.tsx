@@ -6,14 +6,12 @@ import { getUser } from "~/lib/auth"
 import {
     Search,
     Users,
-    FileText,
     AlertCircle,
+    Bot,
     CheckCircle2,
-    TrendingUp,
     Phone,
     Mail,
     MapPin,
-    Calendar,
     Shield,
     Eye,
     Edit,
@@ -21,7 +19,10 @@ import {
     AlertTriangle,
     Loader2,
     Network,
+    Save,
 } from "lucide-react"
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "~/components/ui/sheet"
+import { AgentChat } from "~/components/agent/AgentChat"
 import {
     Card,
     CardHeader,
@@ -34,7 +35,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/in
 import { Input } from "~/components/ui/input"
 import { env } from "~/env"
 
-const BACKEND_1_API_URL = env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api"
+const BACKEND_1_API_URL = env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001/api"
 
 interface Client {
   id: string;
@@ -74,6 +75,13 @@ interface BackendCustomer {
     client_risk_profile: string
 }
 
+interface BackendTransaction {
+    transaction_id: string
+    customer_id: string
+    amount: number
+    timestamp: string
+}
+
 interface RelationshipCustomer {
     customer_id: string
     customer_type: string
@@ -84,7 +92,7 @@ interface LinkingTransaction {
     transaction_id: string
     amount: number
     currency: string | null
-    transaction_date: any
+    transaction_date: string | null
     narrative: string
 }
 
@@ -124,9 +132,16 @@ export default function FrontOfficePage() {
     const [relationships, setRelationships] = useState<CustomerRelationship[]>([])
     const [loadingRelationships, setLoadingRelationships] = useState(false)
     const [relationshipsError, setRelationshipsError] = useState<string | null>(null)
+    const [isEditing, setIsEditing] = useState(false)
+    const [editEmail, setEditEmail] = useState("")
+    const [editPhone, setEditPhone] = useState("")
+    const [editCountry, setEditCountry] = useState("")
 
     // Helper function to map backend customer data to frontend Client interface
-    const mapBackendToClient = (backendCustomer: BackendCustomer): Client => {
+    const mapBackendToClient = (
+        backendCustomer: BackendCustomer,
+        activity?: { totalTransactions: number; totalVolume: number; lastTransaction: string },
+    ): Client => {
         // Determine KYC status
         let kycStatus: "compliant" | "pending" | "expired" = "pending"
         if (backendCustomer.kyc_due_date) {
@@ -173,14 +188,14 @@ export default function FrontOfficePage() {
             status,
             riskRating: backendCustomer.customer_risk_rating.toLowerCase() as "low" | "medium" | "high",
             kycStatus,
-            kycDate: backendCustomer.kyc_last_completed || "",
-            kycExpiryDate: backendCustomer.kyc_due_date || "",
+            kycDate: backendCustomer.kyc_last_completed ?? "",
+            kycExpiryDate: backendCustomer.kyc_due_date ?? "",
             isPep: backendCustomer.customer_is_pep,
             eddRequired: backendCustomer.edd_required,
             eddCompleted: backendCustomer.edd_performed,
-            totalTransactions: 0, // Placeholder - would need to fetch from transactions
-            totalVolume: 0, // Placeholder - would need to fetch from transactions
-            lastTransaction: "", // Placeholder - would need to fetch from transactions
+            totalTransactions: activity?.totalTransactions ?? 0,
+            totalVolume: activity?.totalVolume ?? 0,
+            lastTransaction: activity?.lastTransaction ?? "",
             industry: backendCustomer.client_risk_profile,
             registrationNumber: backendCustomer.customer_id,
             complianceScore: Math.max(0, complianceScore),
@@ -194,14 +209,39 @@ export default function FrontOfficePage() {
             try {
                 setLoading(true)
                 setError(null)
-                const response = await fetch(`${BACKEND_1_API_URL}/customers/customers`)
+                const [customersRes, txnsRes] = await Promise.all([
+                    fetch(`${BACKEND_1_API_URL}/customers/customers`),
+                    fetch(`${BACKEND_1_API_URL}/data/transactions?limit=5000`),
+                ])
 
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch customers: ${response.statusText}`)
+                if (!customersRes.ok) {
+                    throw new Error(`Failed to fetch customers: ${customersRes.statusText}`)
                 }
 
-                const backendCustomers: BackendCustomer[] = await response.json()
-                const mappedClients = backendCustomers.map(mapBackendToClient)
+                const customersRaw: unknown = await customersRes.json()
+                const backendCustomers: BackendCustomer[] = Array.isArray(customersRaw)
+                    ? (customersRaw as BackendCustomer[])
+                    : []
+                const txnsRaw: unknown = txnsRes.ok ? await txnsRes.json() : []
+                const txns: BackendTransaction[] = Array.isArray(txnsRaw)
+                    ? (txnsRaw as BackendTransaction[])
+                    : []
+                const byCustomer = new Map<string, { totalTransactions: number; totalVolume: number; lastTransaction: string }>()
+                for (const txn of txns) {
+                    const key = txn.customer_id
+                    if (!key) continue
+                    const current = byCustomer.get(key) ?? { totalTransactions: 0, totalVolume: 0, lastTransaction: "" }
+                    current.totalTransactions += 1
+                    current.totalVolume += Number(txn.amount ?? 0)
+                    if (!current.lastTransaction || new Date(txn.timestamp) > new Date(current.lastTransaction)) {
+                        current.lastTransaction = txn.timestamp
+                    }
+                    byCustomer.set(key, current)
+                }
+
+                const mappedClients = backendCustomers.map((c) =>
+                    mapBackendToClient(c, byCustomer.get(c.customer_id)),
+                )
                 setClients(mappedClients)
             } catch (err) {
                 console.error("Error fetching customers:", err)
@@ -211,7 +251,7 @@ export default function FrontOfficePage() {
             }
         }
 
-        fetchCustomers()
+        void fetchCustomers()
     }, [])
 
     // Fetch relationships when a client is selected
@@ -230,10 +270,18 @@ export default function FrontOfficePage() {
                 )
 
                 if (!response.ok) {
-                    throw new Error(`Failed to fetch relationships: ${response.statusText}`)
+                    // Graceful fallback when Neo4j service is unavailable
+                    setRelationships([])
+                    if (response.status === 503) {
+                        setRelationshipsError("Relationship graph service is currently unavailable.")
+                    } else {
+                        setRelationshipsError(`Failed to fetch relationships: ${response.statusText}`)
+                    }
+                    return
                 }
 
-                const data: RelationshipResponse = await response.json()
+                const dataRaw: unknown = await response.json()
+                const data = dataRaw as RelationshipResponse
                 setRelationships(data.relationships)
             } catch (err) {
                 console.error("Error fetching relationships:", err)
@@ -243,7 +291,14 @@ export default function FrontOfficePage() {
             }
         }
 
-        fetchRelationships()
+        void fetchRelationships()
+    }, [selectedClient])
+
+    useEffect(() => {
+        if (!selectedClient) return
+        setEditEmail(selectedClient.email)
+        setEditPhone(selectedClient.phone)
+        setEditCountry(selectedClient.country)
     }, [selectedClient])
 
   const filteredClients = clients.filter(
@@ -582,7 +637,9 @@ export default function FrontOfficePage() {
                                                             <div>
                                                                 <p className="text-xs text-muted-foreground">KYC RENEWAL DATE</p>
                                                                 <p className="mt-1 text-sm text-foreground">
-                                                                    {new Date(selectedClient.kycExpiryDate).toLocaleDateString()}
+                                                                    {selectedClient.kycExpiryDate
+                                                                        ? new Date(selectedClient.kycExpiryDate).toLocaleDateString()
+                                                                        : "N/A"}
                                                                 </p>
                                                             </div>
                                                         </div>
@@ -640,13 +697,15 @@ export default function FrontOfficePage() {
                                                             <div>
                                                                 <p className="text-xs text-muted-foreground">TOTAL VOLUME</p>
                                                                 <p className="mt-1 text-2xl font-bold text-foreground">
-                                                                    ${(selectedClient.totalVolume / 1000000).toFixed(1)}M
+                                                                    ${selectedClient.totalVolume.toLocaleString()}
                                                                 </p>
                                                             </div>
                                                             <div>
                                                                 <p className="text-xs text-muted-foreground">LAST TRANSACTION</p>
                                                                 <p className="mt-1 text-sm text-foreground">
-                                                                    {new Date(selectedClient.lastTransaction).toLocaleDateString()}
+                                                                    {selectedClient.lastTransaction
+                                                                        ? new Date(selectedClient.lastTransaction).toLocaleDateString()
+                                                                        : "N/A"}
                                                                 </p>
                                                             </div>
                                                         </div>
@@ -725,6 +784,14 @@ export default function FrontOfficePage() {
                                                                         <p className="mt-1 text-xs text-destructive/80">
                                                                             {relationshipsError}
                                                                         </p>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="mt-3"
+                                                                            onClick={() => setRelationshipsError(null)}
+                                                                        >
+                                                                            Dismiss
+                                                                        </Button>
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -839,19 +906,64 @@ export default function FrontOfficePage() {
 
                                                 {/* Action Buttons */}
                                                 <div className="flex gap-2">
-                                                    <Button className="flex-1">
+                                                    <Button
+                                                        className="flex-1"
+                                                        onClick={() => {
+                                                            if (!selectedClient) return
+                                                            alert(
+                                                                `Client ${selectedClient.name}\nTransactions: ${selectedClient.totalTransactions}\nVolume: $${selectedClient.totalVolume.toLocaleString()}\nRisk: ${selectedClient.riskRating.toUpperCase()}`,
+                                                            )
+                                                        }}
+                                                    >
                                                         <Eye className="mr-2 size-4" />
                                                         View Full Profile
                                                     </Button>
-                                                    <Button variant="outline" className="flex-1">
-                                                        <Edit className="mr-2 size-4" />
-                                                        Edit Information
-                                                    </Button>
+                                                    {!isEditing ? (
+                                                        <Button variant="outline" className="flex-1" onClick={() => setIsEditing(true)}>
+                                                            <Edit className="mr-2 size-4" />
+                                                            Edit Information
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            variant="outline"
+                                                            className="flex-1"
+                                                            onClick={() => {
+                                                                if (!selectedClient) return
+                                                                setClients((prev) =>
+                                                                    prev.map((c) =>
+                                                                        c.id === selectedClient.id
+                                                                            ? { ...c, email: editEmail, phone: editPhone, country: editCountry }
+                                                                            : c,
+                                                                    ),
+                                                                )
+                                                                setSelectedClient((prev) =>
+                                                                    prev ? { ...prev, email: editEmail, phone: editPhone, country: editCountry } : prev,
+                                                                )
+                                                                setIsEditing(false)
+                                                            }}
+                                                        >
+                                                            <Save className="mr-2 size-4" />
+                                                            Save Information
+                                                        </Button>
+                                                    )}
                                                     <Button variant="outline">
                                                         <Download className="mr-2 size-4" />
                                                         Export
                                                     </Button>
                                                 </div>
+
+                                                {isEditing && (
+                                                    <Card>
+                                                        <CardHeader>
+                                                            <CardTitle className="text-base">Edit Contact Information</CardTitle>
+                                                        </CardHeader>
+                                                        <CardContent className="grid gap-3 md:grid-cols-3">
+                                                            <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="Email" />
+                                                            <Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="Phone" />
+                                                            <Input value={editCountry} onChange={(e) => setEditCountry(e.target.value)} placeholder="Country" />
+                                                        </CardContent>
+                                                    </Card>
+                                                )}
                                             </div>
                                         ) : (
                                             <Card>
@@ -873,6 +985,23 @@ export default function FrontOfficePage() {
                     </div>
                 )}
             </div>
+
+      {/* AI Agent floating button */}
+      <Sheet>
+        <SheetTrigger asChild>
+          <button
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
+            aria-label="Open AI Agent"
+          >
+            <Bot className="size-4" />
+            AI Agent
+          </button>
+        </SheetTrigger>
+        <SheetContent side="right" className="w-[420px] p-0 flex flex-col">
+          <SheetTitle className="sr-only">AI Agent</SheetTitle>
+          <AgentChat title="Front Office Agent" defaultContext="Show me the customer risk summary" />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

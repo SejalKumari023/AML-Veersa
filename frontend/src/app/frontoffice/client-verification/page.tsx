@@ -4,6 +4,9 @@ import { User, FileText, Eye } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/button";
+import { env } from "~/env";
+
+const BACKEND_2_API_URL = env.NEXT_PUBLIC_API_URL_2 ?? "/llm-api";
 import {
   Card,
   CardContent,
@@ -45,195 +48,95 @@ export default function ClientVerificationPage() {
     }
   }, [router]);
 
-  // Mock document analyses
-  const [analyses] = useState<DocumentAnalysis[]>([
-    {
-      id: "doc-1",
-      documentType: "passport",
-      status: "completed",
-      metadata: {
-        filename: "john_doe_passport.pdf",
-        fileSize: 2457600,
-        fileType: "application/pdf",
-        mimeType: "application/pdf",
-        uploadedAt: "2025-01-02T10:30:00Z",
-        uploadedBy: "Sarah Chen",
-        pageCount: 1,
-      },
-      formatValidation: {
-        status: "pass",
-        score: 95,
-        issues: [],
-        checks: {
-          spacing: true,
-          fonts: true,
-          indentation: true,
-          spelling: true,
-          headers: true,
-          completeness: true,
-        },
-      },
-      imageAnalysis: {
-        authenticity: {
-          isAuthentic: true,
-          confidence: 0.92,
-          reverseImageSearchResults: 0,
-        },
-        aiDetection: {
-          isAIGenerated: false,
-          confidence: 0.88,
-          indicators: [],
-        },
-        tampering: {
-          isTampered: false,
-          confidence: 0.91,
-          anomalies: [],
-        },
-        forensic: {
-          fileMetadata: {
-            createdDate: "2024-11-15T14:20:00Z",
-            modifiedDate: "2024-11-15T14:20:00Z",
-            software: "Adobe Scan",
-            device: "iPhone 14 Pro",
-          },
-          pixelAnalysis: {
-            inconsistencies: 0,
-            suspiciousRegions: [],
-          },
-          compressionAnalysis: {
-            multipleCompression: false,
-            artifacts: [],
-          },
-        },
-        overallRisk: "low",
-      },
-      riskScore: {
-        overall: 15,
-        level: "low",
-        factors: [
-          {
-            category: "Document Authenticity",
-            score: 10,
-            weight: 0.4,
-            description: "Passport verification passed all authenticity checks",
-            status: "pass",
-          },
-          {
-            category: "Image Quality",
-            score: 8,
-            weight: 0.3,
-            description: "High-quality scan with no tampering detected",
-            status: "pass",
-          },
-          {
-            category: "Format Compliance",
-            score: 5,
-            weight: 0.3,
-            description: "Document meets standard formatting requirements",
-            status: "pass",
-          },
-        ],
-        recommendation:
-          "Document verified successfully. Client KYC can proceed to next stage.",
-        requiresReview: false,
-      },
-      processingTime: 3450,
-      auditTrail: [
-        {
-          timestamp: "2025-01-02T10:30:15Z",
-          action: "Document uploaded",
-          user: "Sarah Chen",
-          details: "Passport document uploaded for client John Doe",
-        },
-        {
-          timestamp: "2025-01-02T10:30:18Z",
-          action: "Analysis completed",
-          user: "System",
-          details: "Automated analysis completed with low risk score",
-        },
-      ],
-    },
-    {
-      id: "doc-2",
-      documentType: "utility_bill",
-      status: "completed",
-      metadata: {
-        filename: "utility_bill_jane_smith.pdf",
-        fileSize: 1843200,
-        fileType: "application/pdf",
-        mimeType: "application/pdf",
-        uploadedAt: "2025-01-02T11:15:00Z",
-        uploadedBy: "Sarah Chen",
-        pageCount: 2,
-      },
-      formatValidation: {
-        status: "warning",
-        score: 72,
-        issues: [
-          {
-            type: "spacing",
-            severity: "low",
-            description: "Inconsistent line spacing detected in address section",
-            location: "Page 1, Lines 12-15",
-            suggestion: "Verify address details manually",
-          },
-          {
-            type: "font",
-            severity: "medium",
-            description: "Multiple font types detected",
-            location: "Page 1, Header section",
-            suggestion: "Check if document has been modified",
-          },
-        ],
-        checks: {
-          spacing: false,
-          fonts: false,
-          indentation: true,
-          spelling: true,
-          headers: true,
-          completeness: true,
-        },
-      },
-      riskScore: {
-        overall: 45,
-        level: "medium",
-        factors: [
-          {
-            category: "Document Authenticity",
-            score: 35,
-            weight: 0.4,
-            description: "Some formatting inconsistencies detected",
-            status: "warning",
-          },
-          {
-            category: "Format Compliance",
-            score: 28,
-            weight: 0.6,
-            description: "Document has multiple font types and spacing issues",
-            status: "warning",
-          },
-        ],
-        recommendation:
-          "Manual review recommended due to formatting inconsistencies. Verify utility bill authenticity with provider.",
-        requiresReview: true,
-      },
-      processingTime: 4120,
-      auditTrail: [
-        {
-          timestamp: "2025-01-02T11:15:10Z",
-          action: "Document uploaded",
-          user: "Sarah Chen",
-          details: "Utility bill uploaded for client Jane Smith",
-        },
-        {
-          timestamp: "2025-01-02T11:15:14Z",
-          action: "Analysis completed",
-          user: "System",
-          details: "Analysis flagged for manual review",
-        },
-      ],
-    },
-  ]);
+  const [analyses, setAnalyses] = useState<DocumentAnalysis[]>([]);
+  const asString = (value: unknown, fallback: string): string =>
+    typeof value === "string" ? value : fallback;
+  const asNumber = (value: unknown, fallback = 0): number =>
+    typeof value === "number" ? value : fallback;
+
+  const toRiskLevel = (score?: number): "low" | "medium" | "high" => {
+    if (!score) return "low";
+    if (score >= 70) return "high";
+    if (score >= 40) return "medium";
+    return "low";
+  };
+
+  const toUiStatus = (
+    status: string,
+  ): "pending" | "uploading" | "processing" | "completed" | "failed" => {
+    if (status === "queued") return "pending";
+    if (status === "processing") return "processing";
+    if (status === "completed") return "completed";
+    if (status === "failed") return "failed";
+    return "pending";
+  };
+
+  useEffect(() => {
+    const fetchAnalyses = async () => {
+      try {
+        const res = await fetch(`${BACKEND_2_API_URL}/documents/analysis`);
+        if (!res.ok) return;
+        const rows = (await res.json()) as Array<Record<string, unknown>>;
+        const mapped: DocumentAnalysis[] = rows.map((row) => {
+          const riskScoreRaw = Number(row.risk_score ?? 0);
+          const riskPercent = Math.round(riskScoreRaw * 100);
+          const riskLevel = toRiskLevel(riskPercent);
+          const status = toUiStatus(asString(row.analysis_status, "pending"));
+          return {
+            id: asString(row.id, ""),
+            documentType: "other",
+            status,
+            metadata: {
+              filename: asString(row.filename, "Unknown"),
+              fileSize: asNumber((row as { file_size?: unknown }).file_size),
+              fileType: asString(row.file_type, "application/pdf"),
+              mimeType: asString(row.file_type, "application/pdf"),
+              uploadedAt: asString(row.upload_timestamp, new Date().toISOString()),
+              uploadedBy: currentUser?.name ?? "Front Office User",
+              pageCount: asNumber((row.metadata as { total_pages?: unknown } | undefined)?.total_pages),
+            },
+            riskScore: {
+              overall: riskPercent,
+              level: riskLevel,
+              factors: [],
+              recommendation:
+                riskLevel === "high"
+                  ? "Escalate for manual compliance review."
+                  : riskLevel === "medium"
+                    ? "Review findings before approval."
+                    : "Proceed with standard checks.",
+              requiresReview: riskLevel !== "low",
+            },
+            processingTime: 0,
+            auditTrail: [
+              {
+                timestamp: asString(row.upload_timestamp, new Date().toISOString()),
+                action: "Document uploaded",
+                user: currentUser?.name ?? "Front Office User",
+                details: asString(row.filename, "Document"),
+              },
+              {
+                timestamp: new Date().toISOString(),
+                action: `Analysis ${status}`,
+                user: "System",
+                details: `Current status: ${status}`,
+              },
+            ],
+            error: (row as { error_message?: string }).error_message,
+          };
+        });
+        setAnalyses(mapped);
+      } catch {
+        // ignore transient fetch errors to keep UI usable
+      }
+    };
+
+    void fetchAnalyses();
+    const interval = setInterval(() => {
+      void fetchAnalyses();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [currentUser?.name]);
 
   const handleViewReport = (analysis: DocumentAnalysis) => {
     // Generate report from analysis
@@ -241,8 +144,8 @@ export default function ClientVerificationPage() {
       documentId: analysis.id,
       generatedAt: new Date().toISOString(),
       summary: {
-        overallStatus: analysis.formatValidation?.status || "pass",
-        riskLevel: analysis.riskScore?.level || "low",
+        overallStatus: analysis.formatValidation?.status ?? "pass",
+        riskLevel: analysis.riskScore?.level ?? "low",
         keyFindings: [
           `Document type: ${analysis.documentType.replace("_", " ")}`,
           `Processing time: ${(analysis.processingTime! / 1000).toFixed(2)}s`,
@@ -256,7 +159,7 @@ export default function ClientVerificationPage() {
       },
       sections: {
         documentInfo: analysis.metadata,
-        formatValidation: analysis.formatValidation || {
+        formatValidation: analysis.formatValidation ?? {
           status: "pass",
           score: 100,
           issues: [],
@@ -270,7 +173,7 @@ export default function ClientVerificationPage() {
           },
         },
         imageAnalysis: analysis.imageAnalysis,
-        riskAssessment: analysis.riskScore || {
+        riskAssessment: analysis.riskScore ?? {
           overall: 0,
           level: "low",
           factors: [],
@@ -382,14 +285,16 @@ export default function ClientVerificationPage() {
                       Avg Process Time
                     </p>
                     <p className="mt-2 text-3xl font-bold">
-                      {(
-                        analyses.reduce(
-                          (acc, a) => acc + (a.processingTime || 0),
-                          0,
-                        ) /
-                        analyses.length /
-                        1000
-                      ).toFixed(1)}
+                      {analyses.length === 0
+                        ? "0.0"
+                        : (
+                            analyses.reduce(
+                              (acc, a) => acc + (a.processingTime ?? 0),
+                              0,
+                            ) /
+                            analyses.length /
+                            1000
+                          ).toFixed(1)}
                       s
                     </p>
                   </div>
@@ -413,9 +318,19 @@ export default function ClientVerificationPage() {
                 acceptedTypes={[".pdf", ".jpg", ".jpeg", ".png"]}
                 maxSizeMB={10}
                 allowMultiple={true}
-                onUpload={(files) => {
-                  console.log("Files uploaded:", files);
-                  // Here you would integrate with the backend API
+                onUpload={async (files) => {
+                  for (const file of files) {
+                    try {
+                      const formData = new FormData();
+                      formData.append("file", file);
+                      const res = await fetch(`${BACKEND_2_API_URL}/documents/upload`, {
+                        method: "POST",
+                        body: formData,
+                      });
+                      if (!res.ok) { console.error("Upload failed:", res.statusText); continue; }
+                      await res.json();
+                    } catch (err) { console.error("Upload error:", err); }
+                  }
                 }}
               />
             </CardContent>
@@ -459,6 +374,9 @@ export default function ClientVerificationPage() {
                           </p>
                           <p
                             className={`text-xs ${
+                              analysis.status === "processing" || analysis.status === "pending"
+                                ? "text-blue-600"
+                                :
                               analysis.riskScore.level === "low"
                                 ? "text-emerald-600"
                                 : analysis.riskScore.level === "medium"
@@ -466,7 +384,9 @@ export default function ClientVerificationPage() {
                                   : "text-destructive"
                             }`}
                           >
-                            {analysis.riskScore.level.toUpperCase()}
+                            {analysis.status === "processing" || analysis.status === "pending"
+                              ? analysis.status.toUpperCase()
+                              : analysis.riskScore.level.toUpperCase()}
                           </p>
                         </div>
                       )}
