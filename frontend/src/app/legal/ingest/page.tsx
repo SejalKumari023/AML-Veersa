@@ -12,6 +12,9 @@ import {
     CardContent,
 } from "~/components/ui/card"
 import { Button } from "~/components/ui/button"
+import { env } from "~/env"
+
+const BACKEND_2_API_URL = env.NEXT_PUBLIC_API_URL_2 ?? "/llm-api"
 
 interface UploadedFile {
     id: string
@@ -26,22 +29,44 @@ export default function IngestPage() {
     useEffect(() => { if (!getUser()) router.replace("/auth/login") }, [router])
 
     const [dragActive, setDragActive] = useState(false)
-    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([
-        {
-            id: "1",
-            fileName: "FCA_AML_Update_2025.pdf",
-            fileSize: "2.4 MB",
-            uploadTime: "2025-11-01 10:30 AM",
-            status: "completed",
-        },
-        {
-            id: "2",
-            fileName: "ICO_Data_Protection_Notice.pdf",
-            fileSize: "1.8 MB",
-            uploadTime: "2025-10-28 2:15 PM",
-            status: "completed",
-        },
-    ])
+    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
+
+    useEffect(() => {
+        const fetchHistory = async () => {
+            try {
+                const res = await fetch(`${BACKEND_2_API_URL}/documents/analysis`)
+                if (!res.ok) return
+                const rowsUnknown: unknown = await res.json()
+                const rows = Array.isArray(rowsUnknown) ? rowsUnknown as Array<Record<string, unknown>> : []
+                const mapped: UploadedFile[] = rows.map((row) => {
+                    const statusRaw = typeof row.analysis_status === "string" ? row.analysis_status : "pending"
+                    const status: UploadedFile["status"] =
+                        statusRaw === "queued" ? "uploading" :
+                        statusRaw === "processing" ? "processing" :
+                        statusRaw === "completed" ? "completed" : "error"
+                    const fileSizeBytes = typeof row.file_size === "number" ? row.file_size : 0
+                    return {
+                        id: typeof row.id === "string" ? row.id : crypto.randomUUID(),
+                        fileName: typeof row.filename === "string" ? row.filename : "Document",
+                        fileSize: `${(fileSizeBytes / (1024 * 1024)).toFixed(2)} MB`,
+                        uploadTime: typeof row.upload_timestamp === "string"
+                            ? new Date(row.upload_timestamp).toLocaleString()
+                            : new Date().toLocaleString(),
+                        status,
+                    }
+                })
+                setUploadedFiles(mapped)
+            } catch {
+                // keep graceful empty state
+            }
+        }
+
+        void fetchHistory()
+        const interval = setInterval(() => {
+            void fetchHistory()
+        }, 5000)
+        return () => clearInterval(interval)
+    }, [])
 
     const handleDrag = (e: React.DragEvent) => {
         e.preventDefault()
@@ -58,20 +83,22 @@ export default function IngestPage() {
         e.stopPropagation()
         setDragActive(false)
 
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            const file = e.dataTransfer.files[0]
-            addFile(file)
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            for (const file of Array.from(e.dataTransfer.files)) {
+                void addFile(file)
+            }
         }
     }
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0]
-            addFile(file)
+        if (e.target.files && e.target.files.length > 0) {
+            for (const file of Array.from(e.target.files)) {
+                void addFile(file)
+            }
         }
     }
 
-    const addFile = (file: File) => {
+    const addFile = async (file: File) => {
         const newFile: UploadedFile = {
             id: Date.now().toString(),
             fileName: file.name,
@@ -79,25 +106,43 @@ export default function IngestPage() {
             uploadTime: new Date().toLocaleString(),
             status: "uploading",
         }
-
         setUploadedFiles((prev) => [newFile, ...prev])
 
-        // Simulate upload progress
-        setTimeout(() => {
-            setUploadedFiles((prev) =>
-                prev.map((f) =>
-                    f.id === newFile.id ? { ...f, status: "processing" } : f
-                )
-            )
-        }, 1500)
+        try {
+            const formData = new FormData()
+            formData.append("file", file)
+            const res = await fetch(`${BACKEND_2_API_URL}/documents/upload`, {
+                method: "POST",
+                body: formData,
+            })
+            if (!res.ok) throw new Error(res.statusText)
+            const { document_id } = (await res.json()) as { document_id: string }
 
-        setTimeout(() => {
             setUploadedFiles((prev) =>
-                prev.map((f) =>
-                    f.id === newFile.id ? { ...f, status: "completed" } : f
-                )
+                prev.map((f) => f.id === newFile.id ? { ...f, status: "processing" } : f)
             )
-        }, 3000)
+
+            const poll = setInterval(() => {
+                void (async () => {
+                    try {
+                        const check = await fetch(`${BACKEND_2_API_URL}/documents/analysis/${document_id}`)
+                        if (!check.ok) return
+                        const data = (await check.json()) as { analysis_status: string }
+                        if (data.analysis_status === "completed" || data.analysis_status === "failed") {
+                            clearInterval(poll)
+                            const finalStatus = data.analysis_status === "completed" ? "completed" : "error"
+                            setUploadedFiles((prev) =>
+                                prev.map((f) => f.id === newFile.id ? { ...f, status: finalStatus } : f)
+                            )
+                        }
+                    } catch { clearInterval(poll) }
+                })()
+            }, 3000)
+        } catch {
+            setUploadedFiles((prev) =>
+                prev.map((f) => f.id === newFile.id ? { ...f, status: "error" } : f)
+            )
+        }
     }
 
     const getStatusDisplay = (status: UploadedFile["status"]) => {

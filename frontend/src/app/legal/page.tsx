@@ -2,17 +2,19 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { AlertCircle, CheckCircle2, Clock, FileText, Download, ArrowRight, Link as LinkIcon } from "lucide-react"
+import { AlertCircle, Bot, CheckCircle2, Clock, FileText, Download, ArrowRight, Link as LinkIcon } from "lucide-react"
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "~/components/ui/sheet"
+import { AgentChat } from "~/components/agent/AgentChat"
 import Link from "next/link"
 import { getUser } from "~/lib/auth"
 import {
     Card,
-    CardHeader,
-    CardTitle,
-    CardDescription,
     CardContent,
 } from "~/components/ui/card"
 import { Button } from "~/components/ui/button"
+import { env } from "~/env"
+
+const BACKEND_2_API_URL = env.NEXT_PUBLIC_API_URL_2 ?? "/llm-api"
 
 interface Notice {
     id: string
@@ -44,74 +46,81 @@ export default function LegalPage() {
         if (!getUser()) router.replace("/auth/login")
     }, [router])
 
-    const [notices, setNotices] = useState<Notice[]>([
-        {
-            id: "1",
-            title: "Regulatory Update on AML Compliance",
-            regulator: "Financial Conduct Authority",
-            dateReceived: "2025-11-01",
-            category: "AML/KYC",
-            status: "action-required",
-            description: "New requirements for customer verification procedures",
-            assignedTo: "Sarah Johnson",
-            dueDate: "2025-11-15",
-            priority: "high",
-        },
-        {
-            id: "2",
-            title: "Data Protection Notice",
-            regulator: "Information Commissioner's Office",
-            dateReceived: "2025-10-28",
-            category: "Data Privacy",
-            status: "reviewed",
-            description: "Updates to personal data retention policies",
-            assignedTo: "Michael Chen",
-            dueDate: "2025-11-10",
-            priority: "medium",
-        },
-        {
-            id: "3",
-            title: "Market Abuse Regulation Update",
-            regulator: "European Securities and Markets Authority",
-            dateReceived: "2025-10-15",
-            category: "Market Conduct",
-            status: "pending",
-            description: "Clarification on market abuse detection requirements",
-            priority: "low",
-        },
-    ])
-
-    const [actions, setActions] = useState<Action[]>([
-        {
-            id: "a1",
-            noticeId: "1",
-            description: "Update customer verification procedures in KYC process",
-            assignedTo: "Sarah Johnson",
-            dueDate: "2025-11-15",
-            priority: "high",
-            status: "in-progress",
-        },
-        {
-            id: "a2",
-            noticeId: "1",
-            description: "Brief compliance team on new AML requirements",
-            assignedTo: "David Wong",
-            dueDate: "2025-11-10",
-            priority: "high",
-            status: "open",
-        },
-        {
-            id: "a3",
-            noticeId: "2",
-            description: "Review and update data retention policy",
-            assignedTo: "Michael Chen",
-            dueDate: "2025-11-10",
-            priority: "medium",
-            status: "open",
-        },
-    ])
+    const [notices, setNotices] = useState<Notice[]>([])
+    const [actions, setActions] = useState<Action[]>([])
 
     const [selectedNotice, setSelectedNotice] = useState<Notice | null>(null)
+
+    useEffect(() => {
+        const fetchLegalNotices = async () => {
+            try {
+                const res = await fetch(`${BACKEND_2_API_URL}/documents/analysis`)
+                if (!res.ok) return
+                const rowsUnknown: unknown = await res.json()
+                const rows = Array.isArray(rowsUnknown) ? rowsUnknown as Array<Record<string, unknown>> : []
+                const mappedNotices: Notice[] = rows.map((row) => {
+                    const id = typeof row.id === "string" ? row.id : ""
+                    const filename = typeof row.filename === "string" ? row.filename : "Document"
+                    const uploadTs = typeof row.upload_timestamp === "string" ? row.upload_timestamp : new Date().toISOString()
+                    const statusRaw = typeof row.analysis_status === "string" ? row.analysis_status : "pending"
+                    const riskScore = typeof row.risk_score === "number" ? row.risk_score : 0
+                    const findings = Array.isArray(row.findings) ? row.findings as Array<Record<string, unknown>> : []
+                    const firstFinding = findings.find((f) => typeof f.description === "string")
+                    const priority: Notice["priority"] = riskScore >= 0.7 ? "high" : riskScore >= 0.4 ? "medium" : "low"
+                    const status: Notice["status"] =
+                        statusRaw === "failed"
+                            ? "action-required"
+                            : statusRaw === "completed" && riskScore >= 0.7
+                                ? "action-required"
+                                : statusRaw === "completed"
+                                    ? "reviewed"
+                                    : "pending"
+                    const dueDays = priority === "high" ? 2 : priority === "medium" ? 5 : 10
+                    const dueDate = new Date(Date.now() + dueDays * 86400000).toISOString()
+                    const lowerName = filename.toLowerCase()
+                    const category = lowerName.includes("notice")
+                        ? "Regulatory Notice"
+                        : lowerName.includes("policy")
+                            ? "Policy Document"
+                            : "Document Corroboration"
+                    return {
+                        id,
+                        title: filename,
+                        regulator: "Uploaded Document",
+                        dateReceived: uploadTs,
+                        category,
+                        status,
+                        description:
+                            typeof firstFinding?.description === "string"
+                                ? firstFinding.description
+                                : "Document ingested for legal review.",
+                        assignedTo: "Legal Team",
+                        dueDate,
+                        priority,
+                    }
+                })
+                const mappedActions: Action[] = mappedNotices.map((n) => ({
+                    id: `a-${n.id}`,
+                    noticeId: n.id,
+                    description:
+                        n.priority === "high"
+                            ? "Immediate legal and compliance escalation required."
+                            : n.priority === "medium"
+                                ? "Review findings and prepare mitigation recommendation."
+                                : "Archive after standard legal validation.",
+                    assignedTo: n.assignedTo ?? "Legal Team",
+                    dueDate: n.dueDate ?? n.dateReceived,
+                    priority: n.priority,
+                    status: n.status === "action-required" ? "open" : n.status === "reviewed" ? "completed" : "in-progress",
+                }))
+                setNotices(mappedNotices)
+                setActions(mappedActions)
+            } catch {
+                // keep empty state on transient errors
+            }
+        }
+        void fetchLegalNotices()
+    }, [])
 
     const getStatusBadgeColor = (status: Notice["status"]) => {
         switch (status) {
@@ -468,7 +477,17 @@ export default function LegalPage() {
                         )}
 
                         <div className="flex gap-2">
-                            <Button variant="outline" size="sm">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                    if (!selectedNotice) return
+                                    window.open(
+                                        `${BACKEND_2_API_URL}/documents/download/${selectedNotice.id}/markdown`,
+                                        "_blank",
+                                    )
+                                }}
+                            >
                                 <Download className="mr-2 size-4" />
                                 Download Document
                             </Button>
@@ -482,6 +501,23 @@ export default function LegalPage() {
                     </div>
                 </div>
             )}
+
+            {/* AI Agent floating button */}
+            <Sheet>
+                <SheetTrigger asChild>
+                    <button
+                        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-medium text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
+                        aria-label="Open AI Agent"
+                    >
+                        <Bot className="size-4" />
+                        AI Agent
+                    </button>
+                </SheetTrigger>
+                <SheetContent side="right" className="w-[420px] p-0 flex flex-col">
+                    <SheetTitle className="sr-only">AI Agent</SheetTitle>
+                    <AgentChat title="Legal Agent" defaultContext="Analyze the latest regulatory notice and suggest compliance rules" />
+                </SheetContent>
+            </Sheet>
         </div>
     )
 }
