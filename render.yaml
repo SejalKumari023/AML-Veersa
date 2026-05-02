@@ -6,6 +6,7 @@ services:
     dockerContext: ./backend_1
     plan: free
     healthCheckPath: /health
+    port: 5001
     envVars:
       - key: PORT
         value: 5001
@@ -26,7 +27,7 @@ services:
       - key: POSTGRES_PASSWORD
         sync: false
       - key: CORS_ORIGINS
-        sync: false
+        value: "*"
       - key: RATE_LIMIT_PER_MIN
         value: "120"
       - key: NEO4J_URI
@@ -48,6 +49,8 @@ services:
     dockerfilePath: ./backend_2/Dockerfile
     dockerContext: ./backend_2
     plan: free
+    healthCheckPath: /health
+    port: 5002
     envVars:
       - key: PORT
         value: 5002
@@ -70,7 +73,7 @@ services:
       - key: POSTGRES_PASSWORD
         sync: false
       - key: CORS_ORIGINS
-        sync: false
+        value: "*"
       - key: RATE_LIMIT_PER_MIN
         value: "120"
       - key: GROQ_API_KEY
