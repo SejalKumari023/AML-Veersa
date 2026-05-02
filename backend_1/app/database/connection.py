@@ -3,6 +3,8 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 import asyncpg
 import os
+import socket
+from urllib.parse import urlparse, unquote
 
 logger = logging.getLogger(__name__)
 
@@ -158,8 +160,19 @@ class PostgresDatabase:
 
             database_url = os.getenv("DATABASE_URL")
             if database_url:
+                parsed = urlparse(database_url)
+                host = parsed.hostname
+                port = parsed.port or 5432
+                try:
+                    ipv4 = socket.getaddrinfo(host, port, socket.AF_INET)[0][4][0]
+                except Exception:
+                    ipv4 = host
                 cls.pool = await asyncpg.create_pool(
-                    database_url,
+                    host=ipv4,
+                    port=port,
+                    user=parsed.username,
+                    password=unquote(parsed.password or ""),
+                    database=parsed.path.lstrip("/"),
                     min_size=1,
                     max_size=10,
                     ssl=True,
@@ -167,13 +180,12 @@ class PostgresDatabase:
             else:
                 cls.pool = await asyncpg.create_pool(
                     host=db_host,
-                    port=db_port,
+                    port=int(db_port),
                     database=db_name,
                     user=db_user,
                     password=db_password,
                     min_size=1,
                     max_size=10,
-                    ssl=True,
                 )
             logger.info("PostgreSQL connection pool initialized")
 

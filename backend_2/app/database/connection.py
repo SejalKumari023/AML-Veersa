@@ -2,8 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import socket
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse, unquote
 
 import asyncpg
 
@@ -206,7 +208,23 @@ class Database:
         db_url = os.getenv("DATABASE_URL", "").strip()
 
         if db_url:
-            cls.pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=10, ssl=True)
+            parsed = urlparse(db_url)
+            host = parsed.hostname
+            port = parsed.port or 5432
+            try:
+                ipv4 = socket.getaddrinfo(host, port, socket.AF_INET)[0][4][0]
+            except Exception:
+                ipv4 = host
+            cls.pool = await asyncpg.create_pool(
+                host=ipv4,
+                port=port,
+                user=parsed.username,
+                password=unquote(parsed.password or ""),
+                database=parsed.path.lstrip("/"),
+                min_size=1,
+                max_size=10,
+                ssl=True,
+            )
         else:
             cls.pool = await asyncpg.create_pool(
                 host=db_host,
