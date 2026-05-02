@@ -21,10 +21,18 @@ _rate_hits: dict[str, int] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await Database.initialize_async()
+    try:
+        await Database.initialize_async()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize database: {e}")
+        logger.warning("Running without persistent storage")
     prompt_store.seed_defaults(DEFAULT_PROMPTS)
     yield
-    await Database.close_async()
+    try:
+        await Database.close_async()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
