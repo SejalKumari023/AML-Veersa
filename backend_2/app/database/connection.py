@@ -206,10 +206,7 @@ class Database:
         db_url = os.getenv("DATABASE_URL", "").strip()
 
         if db_url:
-            if "sslmode=" not in db_url:
-                sep = "&" if "?" in db_url else "?"
-                db_url = f"{db_url}{sep}sslmode=require"
-            cls.pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=10)
+            cls.pool = await asyncpg.create_pool(dsn=db_url, min_size=1, max_size=10, ssl=True)
         else:
             cls.pool = await asyncpg.create_pool(
                 host=db_host,
