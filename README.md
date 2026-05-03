@@ -4,6 +4,14 @@
 
 ---
 
+## 🎬 Demo Video
+
+[![Watch Demo Video](https://img.shields.io/badge/▶%20Watch%20Demo-Google%20Drive-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1EavTm07tPQLTMGpaMgJx0hKuDYT35mJI/view?usp=sharing)
+
+> Click the badge above to watch a full walkthrough of AML-Veersa — covering real-time transaction monitoring, AI-powered rule creation from plain English, and automated document & image forensics.
+
+---
+
 ## Table of Contents
 
 - [Overview](#overview)
