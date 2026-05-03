@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "asyncpg>=0.30.0",
+    "supabase>=2.0.0",
     "dotenv>=0.9.9",
     "fastapi>=0.120.4",
     "langchain>=1.0.3",

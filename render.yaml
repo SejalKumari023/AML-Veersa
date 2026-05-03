@@ -35,6 +35,10 @@ services:
         value: ""
       - key: NEO4J_PASSWORD
         value: ""
+      - key: SUPABASE_URL
+        value: https://pyzyjmlzxmxzepsnsxdc.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_BASE
@@ -74,6 +78,10 @@ services:
         value: "*"
       - key: RATE_LIMIT_PER_MIN
         value: "120"
+      - key: SUPABASE_URL
+        value: https://pyzyjmlzxmxzepsnsxdc.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_API_BASE

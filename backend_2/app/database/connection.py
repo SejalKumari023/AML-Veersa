@@ -2,15 +2,41 @@ import asyncio
 import json
 import logging
 import os
-import socket
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse, unquote
 
-import asyncpg
+from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Lightweight cursor shim (keeps callers that do `async for item in cursor`)
+# ---------------------------------------------------------------------------
+
+class AsyncCursor:
+    def __init__(self, data: List[Dict[str, Any]]):
+        self.data = data
+        self.index = 0
+
+    def sort(self, field: str, direction: int = 1):
+        self.data.sort(key=lambda x: x.get(field, ""), reverse=(direction == -1))
+        return self
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.index >= len(self.data):
+            raise StopAsyncIteration
+        item = self.data[self.index]
+        self.index += 1
+        return item
+
+
+# ---------------------------------------------------------------------------
+# Result shims kept for callers that inspect .inserted_id / .matched_count
+# ---------------------------------------------------------------------------
 
 class InsertResult:
     def __init__(self, inserted_id: str):
@@ -28,71 +54,41 @@ class DeleteResult:
         self.deleted_count = deleted
 
 
-class AsyncCursor:
-    def __init__(self, data: List[Dict[str, Any]]):
-        self.data = data
-        self.index = 0
-
-    def sort(self, field: str, direction: int = 1):
-        self.data.sort(
-            key=lambda x: x.get(field, ""),
-            reverse=(direction == -1),
-        )
-        return self
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self.index >= len(self.data):
-            raise StopAsyncIteration
-        item = self.data[self.index]
-        self.index += 1
-        return item
-
-
-def _json_default(obj: Any):
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    return str(obj)
-
-
-def _decode_record(row: asyncpg.Record) -> Dict[str, Any]:
-    payload = row.get("payload") if "payload" in row else None
-    if isinstance(payload, str):
-        doc = json.loads(payload)
-    elif isinstance(payload, dict):
-        doc = payload
-    else:
-        doc = {}
-    doc["_id"] = row["id"]
-    return doc
-
+# ---------------------------------------------------------------------------
+# PgCollection — thin PostgREST-backed collection
+# ---------------------------------------------------------------------------
 
 class PgCollection:
     def __init__(self, table_name: str):
         self.table_name = table_name
 
+    def _client(self) -> Client:
+        return Database._client  # type: ignore[attr-defined]
+
     async def find(self, query: Dict[str, Any] = None):
-        async with Database.pool.acquire() as conn:
-            rows = await conn.fetch(
-                f"SELECT id, payload FROM {self.table_name} ORDER BY updated_at DESC"
-            )
-        docs = [_decode_record(row) for row in rows]
+        c = self._client()
+        res = await asyncio.to_thread(
+            lambda: c.table(self.table_name)
+            .select("*")
+            .order("updated_at", desc=True)
+            .execute()
+        )
+        docs = _decode_rows(res.data or [])
         if query:
-            docs = [
-                doc for doc in docs if all(doc.get(k) == v for k, v in query.items())
-            ]
+            docs = [d for d in docs if all(d.get(k) == v for k, v in query.items())]
         return AsyncCursor(docs)
 
     async def find_one(self, query: Dict[str, Any]):
         if "_id" in query:
-            async with Database.pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    f"SELECT id, payload FROM {self.table_name} WHERE id = $1",
-                    str(query["_id"]),
-                )
-            return _decode_record(row) if row else None
+            c = self._client()
+            res = await asyncio.to_thread(
+                lambda: c.table(self.table_name)
+                .select("*")
+                .eq("id", str(query["_id"]))
+                .execute()
+            )
+            rows = res.data or []
+            return _decode_rows(rows)[0] if rows else None
 
         cursor = await self.find(query=query)
         async for item in cursor:
@@ -100,32 +96,23 @@ class PgCollection:
         return None
 
     async def insert_one(self, document: Dict[str, Any]):
+        c = self._client()
         doc = document.copy()
-        doc_id = str(doc.pop("_id", "")) or ""
+        existing_id = str(doc.pop("_id", "")) or ""
+        payload = json.dumps(doc, default=_json_default)
 
-        async with Database.pool.acquire() as conn:
-            if not doc_id:
-                row = await conn.fetchrow(
-                    f"""
-                    INSERT INTO {self.table_name} (payload)
-                    VALUES ($1::jsonb)
-                    RETURNING id
-                    """,
-                    json.dumps(doc, default=_json_default),
-                )
-                doc_id = row["id"]
-            else:
-                await conn.execute(
-                    f"""
-                    INSERT INTO {self.table_name} (id, payload)
-                    VALUES ($1, $2::jsonb)
-                    ON CONFLICT (id) DO UPDATE SET
-                      payload = EXCLUDED.payload,
-                      updated_at = CURRENT_TIMESTAMP
-                    """,
-                    doc_id,
-                    json.dumps(doc, default=_json_default),
-                )
+        if existing_id:
+            await asyncio.to_thread(
+                lambda: c.table(self.table_name).upsert(
+                    {"id": existing_id, "payload": payload}, on_conflict="id"
+                ).execute()
+            )
+            doc_id = existing_id
+        else:
+            res = await asyncio.to_thread(
+                lambda: c.table(self.table_name).insert({"payload": payload}).execute()
+            )
+            doc_id = (res.data or [{}])[0].get("id", "")
         return InsertResult(doc_id)
 
     async def update_one(self, query: Dict[str, Any], update: Dict[str, Any]):
@@ -140,18 +127,15 @@ class PgCollection:
 
         if "$set" in update:
             current.update(update["$set"])
-            doc_id = str(current.get("_id"))
-            current.pop("_id", None)
-            async with Database.pool.acquire() as conn:
-                await conn.execute(
-                    f"""
-                    UPDATE {self.table_name}
-                    SET payload = $2::jsonb, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $1
-                    """,
-                    doc_id,
-                    json.dumps(current, default=_json_default),
-                )
+            doc_id = str(current.pop("_id", ""))
+            payload = json.dumps(current, default=_json_default)
+            c = self._client()
+            await asyncio.to_thread(
+                lambda: c.table(self.table_name)
+                .update({"payload": payload})
+                .eq("id", doc_id)
+                .execute()
+            )
             return UpdateResult(1, 1)
         return UpdateResult(0, 0)
 
@@ -159,28 +143,25 @@ class PgCollection:
         current = await self.find_one(query)
         if not current:
             return DeleteResult(0)
-
-        doc_id = str(current.get("_id"))
-        async with Database.pool.acquire() as conn:
-            result = await conn.execute(
-                f"DELETE FROM {self.table_name} WHERE id = $1",
-                doc_id,
-            )
-        deleted = 1 if result == "DELETE 1" else 0
+        doc_id = str(current.get("_id", ""))
+        c = self._client()
+        res = await asyncio.to_thread(
+            lambda: c.table(self.table_name).delete().eq("id", doc_id).execute()
+        )
+        deleted = 1 if res.data else 0
         return DeleteResult(deleted)
 
     async def count_documents(self, query: Dict[str, Any] = None):
-        if not query:
-            async with Database.pool.acquire() as conn:
-                count = await conn.fetchval(f"SELECT COUNT(*) FROM {self.table_name}")
-            return int(count or 0)
-
         cursor = await self.find(query=query)
         count = 0
         async for _ in cursor:
             count += 1
         return count
 
+
+# ---------------------------------------------------------------------------
+# PgDatabase — named collection accessors
+# ---------------------------------------------------------------------------
 
 class PgDatabase:
     def __init__(self):
@@ -189,92 +170,40 @@ class PgDatabase:
         self.image_hashes = PgCollection("image_hashes")
 
 
-class Database:
-    """Database singleton backed by PostgreSQL (Supabase-compatible)."""
+# ---------------------------------------------------------------------------
+# Database singleton
+# ---------------------------------------------------------------------------
 
-    pool: Optional[asyncpg.Pool] = None
+class Database:
+    _client: Optional[Client] = None
     database: Optional[PgDatabase] = None
 
     @classmethod
     async def initialize_async(cls):
-        if cls.pool is not None:
+        if cls._client is not None:
             return
 
-        db_host = os.getenv("POSTGRES_HOST", "localhost")
-        db_port = int(os.getenv("POSTGRES_PORT", "5432"))
-        db_name = os.getenv("POSTGRES_DB", "postgres")
-        db_user = os.getenv("POSTGRES_USER", "postgres")
-        db_password = os.getenv("POSTGRES_PASSWORD", "")
-        db_url = os.getenv("DATABASE_URL", "").strip()
+        url = os.getenv("SUPABASE_URL", "").strip()
+        key = os.getenv("SUPABASE_KEY", "").strip()
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
 
-        if db_url:
-            parsed = urlparse(db_url)
-            host = parsed.hostname
-            port = parsed.port or 5432
-            try:
-                ipv4 = socket.getaddrinfo(host, port, socket.AF_INET)[0][4][0]
-            except Exception:
-                ipv4 = host
-            cls.pool = await asyncpg.create_pool(
-                host=ipv4,
-                port=port,
-                user=parsed.username,
-                password=unquote(parsed.password or ""),
-                database=parsed.path.lstrip("/"),
-                min_size=1,
-                max_size=10,
-                ssl=True,
-            )
-        else:
-            cls.pool = await asyncpg.create_pool(
-                host=db_host,
-                port=db_port,
-                database=db_name,
-                user=db_user,
-                password=db_password,
-                min_size=1,
-                max_size=10,
-                ssl="require",
-            )
+        cls._client = create_client(url, key)
 
-        async with cls.pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE EXTENSION IF NOT EXISTS pgcrypto;
-                CREATE TABLE IF NOT EXISTS document_analysis (
-                  id TEXT PRIMARY KEY DEFAULT ('obj_' || replace(gen_random_uuid()::text, '-', '')),
-                  payload JSONB NOT NULL,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS image_analysis (
-                  id TEXT PRIMARY KEY DEFAULT ('obj_' || replace(gen_random_uuid()::text, '-', '')),
-                  payload JSONB NOT NULL,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE TABLE IF NOT EXISTS image_hashes (
-                  id TEXT PRIMARY KEY DEFAULT ('obj_' || replace(gen_random_uuid()::text, '-', '')),
-                  payload JSONB NOT NULL,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                """
-            )
+        # Smoke-test
+        await asyncio.to_thread(
+            lambda: cls._client.table("document_analysis").select("id").limit(1).execute()
+        )
 
         cls.database = PgDatabase()
-        logger.info("Backend 2 PostgreSQL storage initialized")
+        logger.info("Backend 2 Supabase storage initialized")
 
     @classmethod
     def initialize(cls):
-        """Sync wrapper used by existing app startup code."""
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # Startup in FastAPI context usually runs in loop; schedule task and wait for it.
-                fut = asyncio.run_coroutine_threadsafe(
-                    cls.initialize_async(), loop
-                )
+                fut = asyncio.run_coroutine_threadsafe(cls.initialize_async(), loop)
                 fut.result(timeout=30)
             else:
                 loop.run_until_complete(cls.initialize_async())
@@ -283,10 +212,8 @@ class Database:
 
     @classmethod
     async def close_async(cls):
-        if cls.pool:
-            await cls.pool.close()
-            cls.pool = None
-            cls.database = None
+        cls._client = None
+        cls.database = None
 
     @classmethod
     def close(cls):
@@ -305,3 +232,32 @@ class Database:
         if cls.database is None:
             cls.initialize()
         return cls.database
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _json_default(obj: Any):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
+
+
+def _decode_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert Supabase rows (with id + payload columns) into document dicts."""
+    docs = []
+    for row in rows:
+        payload = row.get("payload")
+        if isinstance(payload, str):
+            try:
+                doc = json.loads(payload)
+            except Exception:
+                doc = {}
+        elif isinstance(payload, dict):
+            doc = payload.copy()
+        else:
+            doc = {}
+        doc["_id"] = row.get("id", "")
+        docs.append(doc)
+    return docs

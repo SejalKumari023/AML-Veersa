@@ -1,25 +1,26 @@
+import asyncio
 import logging
-from typing import Dict, List, Any, Optional
-from datetime import datetime
-import asyncpg
 import os
-import socket
-from urllib.parse import urlparse, unquote
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
 
 
-class InMemoryCollection:
-    """Simple in-memory collection that mimics async MongoDB operations"""
+# ---------------------------------------------------------------------------
+# In-memory fallback (legacy, kept for Database.initialize() callers)
+# ---------------------------------------------------------------------------
 
+class InMemoryCollection:
     def __init__(self, name: str):
         self.name = name
         self._data: Dict[str, Dict[str, Any]] = {}
         self._counter = 0
 
     async def find(self, query: Dict[str, Any] = None):
-        """Find documents matching query"""
-
         class AsyncCursor:
             def __init__(self, data):
                 self.data = list(data.values())
@@ -38,14 +39,11 @@ class InMemoryCollection:
         return AsyncCursor(self._data)
 
     async def find_one(self, query: Dict[str, Any]):
-        """Find a single document"""
         if "_id" in query:
-            obj_id = query["_id"]
-            return self._data.get(str(obj_id))
+            return self._data.get(str(query["_id"]))
         return None
 
     async def insert_one(self, document: Dict[str, Any]):
-        """Insert a document"""
         self._counter += 1
         doc_id = f"obj_{self._counter}"
 
@@ -56,323 +54,114 @@ class InMemoryCollection:
         document_copy = document.copy()
         document_copy["_id"] = doc_id
         self._data[doc_id] = document_copy
-
         return InsertResult(doc_id)
 
     async def update_one(self, query: Dict[str, Any], update: Dict[str, Any]):
-        """Update a document"""
-        if "_id" in query:
-            obj_id = str(query["_id"])
-            if obj_id in self._data:
-                if "$set" in update:
-                    self._data[obj_id].update(update["$set"])
-
-                class UpdateResult:
-                    def __init__(self, matched, modified):
-                        self.matched_count = matched
-                        self.modified_count = modified
-
-                return UpdateResult(1, 1)
-
         class UpdateResult:
             def __init__(self, matched, modified):
                 self.matched_count = matched
                 self.modified_count = modified
 
-        return UpdateResult(0, 0)
-
-    async def delete_one(self, query: Dict[str, Any]):
-        """Delete a document"""
         if "_id" in query:
             obj_id = str(query["_id"])
             if obj_id in self._data:
-                del self._data[obj_id]
+                if "$set" in update:
+                    self._data[obj_id].update(update["$set"])
+                return UpdateResult(1, 1)
+        return UpdateResult(0, 0)
 
-                class DeleteResult:
-                    def __init__(self, deleted):
-                        self.deleted_count = deleted
-
-                return DeleteResult(1)
-
+    async def delete_one(self, query: Dict[str, Any]):
         class DeleteResult:
             def __init__(self, deleted):
                 self.deleted_count = deleted
 
+        if "_id" in query:
+            obj_id = str(query["_id"])
+            if obj_id in self._data:
+                del self._data[obj_id]
+                return DeleteResult(1)
         return DeleteResult(0)
 
 
 class InMemoryDatabase:
-    """Simple in-memory database that mimics async MongoDB"""
-
     def __init__(self):
         self._collections: Dict[str, InMemoryCollection] = {}
 
     def __getattr__(self, name: str):
-        """Get or create a collection"""
         if name not in self._collections:
             self._collections[name] = InMemoryCollection(name)
         return self._collections[name]
 
 
 class Database:
-    """Database singleton for in-memory storage"""
-
     database: Optional[InMemoryDatabase] = None
 
     @classmethod
     def initialize(cls):
-        """Initialize in-memory database"""
-        try:
-            cls.database = InMemoryDatabase()
-            logger.info("In-memory database initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-            raise
+        cls.database = InMemoryDatabase()
+        logger.info("In-memory database initialized")
 
     @classmethod
     def close(cls):
-        """Close database connection (no-op for in-memory)"""
         logger.info("In-memory database closed")
 
     @classmethod
     def get_database(cls):
-        """Get database instance"""
         if cls.database is None:
             cls.initialize()
         return cls.database
 
 
-class PostgresDatabase:
-    """PostgreSQL database connection pool"""
+# ---------------------------------------------------------------------------
+# Supabase-backed persistent store
+# ---------------------------------------------------------------------------
 
-    pool: Optional[asyncpg.Pool] = None
+def _run(fn):
+    """Run a synchronous supabase call and return the result."""
+    return fn()
+
+
+class PostgresDatabase:
+    """PostgreSQL via Supabase REST API (HTTPS port 443 — no port 5432 needed)."""
+
+    _client: Optional[Client] = None
 
     @classmethod
     async def initialize(cls):
-        """Initialize PostgreSQL connection pool"""
-        try:
-            # Get connection parameters from environment
-            db_host = os.getenv("POSTGRES_HOST", "localhost")
-            db_port = os.getenv("POSTGRES_PORT", "5432")
-            db_name = os.getenv("POSTGRES_DB", "aml")
-            db_user = os.getenv("POSTGRES_USER", "aml")
-            db_password = os.getenv("POSTGRES_PASSWORD", "aml")
-
-            database_url = os.getenv("DATABASE_URL")
-            if database_url:
-                parsed = urlparse(database_url)
-                host = parsed.hostname
-                port = parsed.port or 5432
-                try:
-                    ipv4 = socket.getaddrinfo(host, port, socket.AF_INET)[0][4][0]
-                except Exception:
-                    ipv4 = host
-                cls.pool = await asyncpg.create_pool(
-                    host=ipv4,
-                    port=port,
-                    user=parsed.username,
-                    password=unquote(parsed.password or ""),
-                    database=parsed.path.lstrip("/"),
-                    min_size=1,
-                    max_size=10,
-                    ssl=True,
-                )
-            else:
-                cls.pool = await asyncpg.create_pool(
-                    host=db_host,
-                    port=int(db_port),
-                    database=db_name,
-                    user=db_user,
-                    password=db_password,
-                    min_size=1,
-                    max_size=10,
-                )
-            logger.info("PostgreSQL connection pool initialized")
-
-            # Create rules table if it doesn't exist
-            await cls.create_rules_table()
-        except Exception as e:
-            logger.error(f"Failed to initialize PostgreSQL: {e}")
-            raise
+        url = os.getenv("SUPABASE_URL", "").strip()
+        key = os.getenv("SUPABASE_KEY", "").strip()
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
+        cls._client = create_client(url, key)
+        # Smoke-test the connection
+        await asyncio.to_thread(
+            lambda: cls._client.table("rules").select("id").limit(1).execute()
+        )
+        logger.info("Supabase client initialized successfully")
 
     @classmethod
     async def create_rules_table(cls):
-        """Create rules table if it doesn't exist"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rules (
-                    id TEXT PRIMARY KEY,
-                    rule_text TEXT NOT NULL,
-                    function_code TEXT NOT NULL,
-                    explanation TEXT,
-                    attributes_used TEXT[],
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """
-            )
-            logger.info("Rules table created/verified")
-
-            # Create transactions table
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS transactions (
-                    transaction_id TEXT PRIMARY KEY,
-                    booking_jurisdiction TEXT,
-                    regulator TEXT,
-                    booking_datetime TIMESTAMP,
-                    value_date TIMESTAMP,
-                    amount DECIMAL(15, 2) NOT NULL,
-                    currency TEXT NOT NULL,
-                    channel TEXT,
-                    product_type TEXT,
-                    originator_name TEXT,
-                    originator_account TEXT,
-                    originator_country TEXT,
-                    beneficiary_name TEXT,
-                    beneficiary_account TEXT,
-                    beneficiary_country TEXT,
-                    swift_mt TEXT,
-                    ordering_institution_bic TEXT,
-                    beneficiary_institution_bic TEXT,
-                    swift_f50_present BOOLEAN,
-                    swift_f59_present BOOLEAN,
-                    swift_f70_purpose TEXT,
-                    swift_f71_charges TEXT,
-                    travel_rule_complete BOOLEAN,
-                    fx_indicator BOOLEAN,
-                    fx_base_ccy TEXT,
-                    fx_quote_ccy TEXT,
-                    fx_applied_rate DECIMAL(15, 6),
-                    fx_market_rate DECIMAL(15, 6),
-                    fx_spread_bps DECIMAL(10, 2),
-                    fx_counterparty TEXT,
-                    customer_id TEXT NOT NULL,
-                    customer_type TEXT,
-                    customer_risk_rating TEXT,
-                    customer_is_pep BOOLEAN,
-                    kyc_last_completed TIMESTAMP,
-                    kyc_due_date TIMESTAMP,
-                    edd_required BOOLEAN,
-                    edd_performed BOOLEAN,
-                    sow_documented BOOLEAN,
-                    purpose_code TEXT,
-                    narrative TEXT,
-                    is_advised BOOLEAN,
-                    product_complex BOOLEAN,
-                    client_risk_profile TEXT,
-                    suitability_assessed BOOLEAN,
-                    suitability_result TEXT,
-                    product_has_va_exposure BOOLEAN,
-                    va_disclosure_provided BOOLEAN,
-                    cash_id_verified BOOLEAN,
-                    daily_cash_total_customer DECIMAL(15, 2),
-                    daily_cash_txn_count INTEGER,
-                    sanctions_screening TEXT,
-                    suspicion_determined_datetime TIMESTAMP,
-                    str_filed_datetime TIMESTAMP,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    status TEXT DEFAULT 'pending',
-                    risk_score DECIMAL(5, 2),
-                    flags TEXT[],
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            logger.info("Transactions table created/verified")
-
-            # Create alerts table
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS alerts (
-                    id TEXT PRIMARY KEY,
-                    transaction_id TEXT NOT NULL,
-                    alert_type TEXT NOT NULL,
-                    severity TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    timestamp TIMESTAMP NOT NULL,
-                    status TEXT DEFAULT 'active',
-                    assigned_to TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id)
-                )
-                """
-            )
-            logger.info("Alerts table created/verified")
-
-            # Create customers table
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS customers (
-                    id TEXT PRIMARY KEY,
-                    customer_id TEXT UNIQUE NOT NULL,
-                    customer_type TEXT NOT NULL,
-                    customer_risk_rating TEXT NOT NULL,
-                    customer_is_pep BOOLEAN NOT NULL,
-                    kyc_last_completed DATE,
-                    kyc_due_date DATE,
-                    edd_required BOOLEAN DEFAULT FALSE,
-                    edd_performed BOOLEAN DEFAULT FALSE,
-                    sow_documented BOOLEAN DEFAULT FALSE,
-                    client_risk_profile TEXT DEFAULT 'Balanced',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            logger.info("Customers table created/verified")
-
-            # Create accounts table
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS accounts (
-                    id TEXT PRIMARY KEY,
-                    account_number TEXT UNIQUE NOT NULL,
-                    customer_id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    country TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
-                )
-                """
-            )
-            logger.info("Accounts table created/verified")
-
-            # Create prompts table
-            await conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS prompts (
-                    name TEXT PRIMARY KEY,
-                    description TEXT NOT NULL DEFAULT '',
-                    content TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            logger.info("Prompts table created/verified")
+        # Tables are pre-created in Supabase — no-op.
+        pass
 
     @classmethod
     async def close(cls):
-        """Close database connection pool"""
-        if cls.pool:
-            await cls.pool.close()
-            logger.info("PostgreSQL connection pool closed")
+        cls._client = None
+        logger.info("Supabase client closed")
 
     @classmethod
-    def get_pool(cls) -> asyncpg.Pool:
-        """Get database pool"""
-        if cls.pool is None:
-            raise RuntimeError(
-                "Database pool not initialized. Call initialize() first."
-            )
-        return cls.pool
+    def get_pool(cls):
+        return cls._client
+
+    @classmethod
+    def _c(cls) -> Client:
+        if cls._client is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        return cls._client
+
+    # ------------------------------------------------------------------
+    # Rules
+    # ------------------------------------------------------------------
 
     @classmethod
     async def insert_rule(
@@ -383,65 +172,35 @@ class PostgresDatabase:
         explanation: Optional[str] = None,
         attributes_used: Optional[List[str]] = None,
     ) -> str:
-        """Insert a new rule into the database"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO rules (id, rule_text, function_code, explanation, attributes_used)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (id) DO UPDATE SET
-                    rule_text = EXCLUDED.rule_text,
-                    function_code = EXCLUDED.function_code,
-                    explanation = EXCLUDED.explanation,
-                    attributes_used = EXCLUDED.attributes_used,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                rule_id,
-                rule_text,
-                function_code,
-                explanation,
-                attributes_used or [],
-            )
-            logger.info(f"Rule inserted/updated with id: {rule_id}")
-            return rule_id
+        c = cls._c()
+        data = {
+            "id": rule_id,
+            "rule_text": rule_text,
+            "function_code": function_code,
+            "explanation": explanation,
+            "attributes_used": attributes_used or [],
+        }
+        await asyncio.to_thread(
+            lambda: c.table("rules").upsert(data, on_conflict="id").execute()
+        )
+        logger.info(f"Rule upserted: {rule_id}")
+        return rule_id
 
     @classmethod
     async def get_rule(cls, rule_id: str) -> Optional[Dict[str, Any]]:
-        """Get a rule by ID"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT id, rule_text, function_code, explanation, attributes_used, created_at, updated_at
-                FROM rules
-                WHERE id = $1
-                """,
-                rule_id,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("rules").select("*").eq("id", rule_id).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_all_rules(cls) -> List[Dict[str, Any]]:
-        """Get all rules"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT id, rule_text, function_code, explanation, attributes_used, created_at, updated_at
-                FROM rules
-                ORDER BY created_at DESC
-                """
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("rules").select("*").order("created_at", desc=True).execute()
+        )
+        return res.data or []
 
     @classmethod
     async def update_rule(
@@ -452,502 +211,309 @@ class PostgresDatabase:
         explanation: Optional[str] = None,
         attributes_used: Optional[List[str]] = None,
     ) -> bool:
-        """Update an existing rule"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        updates = []
-        params = []
-        param_count = 1
-
+        updates: Dict[str, Any] = {}
         if rule_text is not None:
-            updates.append(f"rule_text = ${param_count}")
-            params.append(rule_text)
-            param_count += 1
-
+            updates["rule_text"] = rule_text
         if function_code is not None:
-            updates.append(f"function_code = ${param_count}")
-            params.append(function_code)
-            param_count += 1
-
+            updates["function_code"] = function_code
         if explanation is not None:
-            updates.append(f"explanation = ${param_count}")
-            params.append(explanation)
-            param_count += 1
-
+            updates["explanation"] = explanation
         if attributes_used is not None:
-            updates.append(f"attributes_used = ${param_count}")
-            params.append(attributes_used)
-            param_count += 1
-
+            updates["attributes_used"] = attributes_used
         if not updates:
             return False
-
-        updates.append(f"updated_at = CURRENT_TIMESTAMP")
-        params.append(rule_id)
-
-        query = f"""
-            UPDATE rules
-            SET {', '.join(updates)}
-            WHERE id = ${param_count}
-        """
-
-        async with cls.pool.acquire() as conn:
-            result = await conn.execute(query, *params)
-            return result == "UPDATE 1"
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("rules").update(updates).eq("id", rule_id).execute()
+        )
+        return bool(res.data)
 
     @classmethod
     async def delete_rule(cls, rule_id: str) -> bool:
-        """Delete a rule by ID"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("rules").delete().eq("id", rule_id).execute()
+        )
+        return bool(res.data)
 
-        async with cls.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM rules WHERE id = $1",
-                rule_id,
-            )
-            return result == "DELETE 1"
+    # ------------------------------------------------------------------
+    # Transactions
+    # ------------------------------------------------------------------
 
-    # Transaction methods
     @classmethod
     async def insert_transaction(cls, transaction_data: Dict[str, Any]) -> str:
-        """Insert a new transaction into the database"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            # Build the INSERT query dynamically based on provided fields
-            columns = list(transaction_data.keys())
-            placeholders = [f"${i+1}" for i in range(len(columns))]
-            values = [transaction_data[col] for col in columns]
-            query = f"""
-                INSERT INTO transactions ({', '.join(columns)})
-                VALUES ({', '.join(placeholders)})
-                ON CONFLICT (transaction_id) DO UPDATE SET
-                    {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col != 'transaction_id'])},
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING transaction_id
-            """
-
-            row = await conn.fetchrow(query, *values)
-            logger.info(f"Transaction inserted/updated: {row['transaction_id']}")
-            return row["transaction_id"]
+        c = cls._c()
+        # Coerce datetime objects to ISO strings for PostgREST
+        data = _coerce_datetimes(transaction_data)
+        tid = data.get("transaction_id", "")
+        await asyncio.to_thread(
+            lambda: c.table("transactions").upsert(data, on_conflict="transaction_id").execute()
+        )
+        logger.info(f"Transaction upserted: {tid}")
+        return tid
 
     @classmethod
     async def get_transaction(cls, transaction_id: str) -> Optional[Dict[str, Any]]:
-        """Get a transaction by ID"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM transactions WHERE transaction_id = $1",
-                transaction_id,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("transactions").select("*").eq("transaction_id", transaction_id).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_all_transactions(
         cls, limit: int = 1000, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get all transactions with pagination"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM transactions
-                ORDER BY timestamp DESC
-                LIMIT $1 OFFSET $2
-                """,
-                limit,
-                offset,
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("transactions")
+            .select("*")
+            .order("timestamp", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return res.data or []
 
     @classmethod
     async def delete_transaction(cls, transaction_id: str) -> bool:
-        """Delete a transaction by ID"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("transactions").delete().eq("transaction_id", transaction_id).execute()
+        )
+        return bool(res.data)
 
-        async with cls.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM transactions WHERE transaction_id = $1",
-                transaction_id,
-            )
-            return result == "DELETE 1"
+    # ------------------------------------------------------------------
+    # Alerts
+    # ------------------------------------------------------------------
 
-    # Alert methods
     @classmethod
     async def insert_alert(cls, alert_data: Dict[str, Any]) -> str:
-        """Insert a new alert into the database"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            columns = list(alert_data.keys())
-            placeholders = [f"${i+1}" for i in range(len(columns))]
-            values = [alert_data[col] for col in columns]
-
-            query = f"""
-                INSERT INTO alerts ({', '.join(columns)})
-                VALUES ({', '.join(placeholders)})
-                RETURNING id
-            """
-
-            row = await conn.fetchrow(query, *values)
-            logger.info(f"Alert inserted: {row['id']}")
-            return row["id"]
+        c = cls._c()
+        data = _coerce_datetimes(alert_data)
+        if not data.get("id"):
+            data["id"] = f"alert_{uuid.uuid4().hex[:12]}"
+        aid = data["id"]
+        await asyncio.to_thread(
+            lambda: c.table("alerts").upsert(data, on_conflict="id").execute()
+        )
+        logger.info(f"Alert upserted: {aid}")
+        return aid
 
     @classmethod
     async def get_alert(cls, alert_id: str) -> Optional[Dict[str, Any]]:
-        """Get an alert by ID"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM alerts WHERE id = $1",
-                alert_id,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("alerts").select("*").eq("id", alert_id).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_all_alerts(
         cls, limit: int = 1000, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get all alerts with pagination"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM alerts
-                ORDER BY timestamp DESC
-                LIMIT $1 OFFSET $2
-                """,
-                limit,
-                offset,
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("alerts")
+            .select("*")
+            .order("timestamp", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return res.data or []
 
     @classmethod
     async def delete_alert(cls, alert_id: str) -> bool:
-        """Delete an alert by ID"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("alerts").delete().eq("id", alert_id).execute()
+        )
+        return bool(res.data)
 
-        async with cls.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM alerts WHERE id = $1",
-                alert_id,
-            )
-            return result == "DELETE 1"
+    # ------------------------------------------------------------------
+    # Risk summary
+    # ------------------------------------------------------------------
 
     @classmethod
     async def get_risk_summary(cls) -> Dict[str, Any]:
-        """Get risk analytics summary"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
+        c = cls._c()
+        txns_res = await asyncio.to_thread(
+            lambda: c.table("transactions").select("risk_score").execute()
+        )
+        txns = txns_res.data or []
+        total = len(txns)
+        scores = [float(r["risk_score"]) for r in txns if r.get("risk_score") is not None]
+        high = sum(1 for s in scores if s >= 70)
+        medium = sum(1 for s in scores if 40 <= s < 70)
+        low = sum(1 for s in scores if s < 40)
 
-        async with cls.pool.acquire() as conn:
-            # Get transaction counts by risk level
-            total_transactions = await conn.fetchval(
-                "SELECT COUNT(*) FROM transactions"
-            )
+        alerts_res = await asyncio.to_thread(
+            lambda: c.table("alerts").select("status").execute()
+        )
+        alerts = alerts_res.data or []
+        active = sum(1 for a in alerts if a.get("status") == "active")
+        resolved = sum(1 for a in alerts if a.get("status") == "resolved")
 
-            high_risk = await conn.fetchval(
-                "SELECT COUNT(*) FROM transactions WHERE risk_score >= 70"
-            )
+        return {
+            "total_transactions": total,
+            "high_risk_transactions": high,
+            "medium_risk_transactions": medium,
+            "low_risk_transactions": low,
+            "active_alerts": active,
+            "resolved_alerts": resolved,
+        }
 
-            medium_risk = await conn.fetchval(
-                "SELECT COUNT(*) FROM transactions WHERE risk_score >= 40 AND risk_score < 70"
-            )
+    # ------------------------------------------------------------------
+    # Customers
+    # ------------------------------------------------------------------
 
-            low_risk = await conn.fetchval(
-                "SELECT COUNT(*) FROM transactions WHERE risk_score < 40"
-            )
-
-            # Get alert counts by status
-            active_alerts = await conn.fetchval(
-                "SELECT COUNT(*) FROM alerts WHERE status = 'active'"
-            )
-
-            resolved_alerts = await conn.fetchval(
-                "SELECT COUNT(*) FROM alerts WHERE status = 'resolved'"
-            )
-
-            return {
-                "total_transactions": total_transactions or 0,
-                "high_risk_transactions": high_risk or 0,
-                "medium_risk_transactions": medium_risk or 0,
-                "low_risk_transactions": low_risk or 0,
-                "active_alerts": active_alerts or 0,
-                "resolved_alerts": resolved_alerts or 0,
-            }
-
-    # Customer methods
     @classmethod
     async def insert_customer(cls, customer_data: Dict[str, Any]) -> str:
-        """Insert a new customer into the database"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            import uuid
-
-            customer_id = customer_data.get("id") or str(uuid.uuid4())
-            columns = list(customer_data.keys())
-            if "id" not in columns:
-                columns.insert(0, "id")
-                customer_data["id"] = customer_id
-
-            placeholders = [f"${i+1}" for i in range(len(columns))]
-            values = [customer_data[col] for col in columns]
-
-            query = f"""
-                INSERT INTO customers ({', '.join(columns)})
-                VALUES ({', '.join(placeholders)})
-                ON CONFLICT (customer_id) DO UPDATE SET
-                    {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col not in ['id', 'customer_id']])},
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING id
-            """
-
-            row = await conn.fetchrow(query, *values)
-            logger.info(f"Customer inserted/updated: {row['id']}")
-            return row["id"]
+        c = cls._c()
+        data = _coerce_datetimes(customer_data)
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+        cid = data["id"]
+        await asyncio.to_thread(
+            lambda: c.table("customers").upsert(data, on_conflict="customer_id").execute()
+        )
+        return cid
 
     @classmethod
     async def get_customer(cls, customer_id: str) -> Optional[Dict[str, Any]]:
-        """Get a customer by customer_id"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM customers WHERE customer_id = $1",
-                customer_id,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("customers").select("*").eq("customer_id", customer_id).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_customer_by_id(cls, id: str) -> Optional[Dict[str, Any]]:
-        """Get a customer by internal id"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM customers WHERE id = $1",
-                id,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("customers").select("*").eq("id", id).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_all_customers(
         cls, limit: int = 1000, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get all customers with pagination"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM customers
-                ORDER BY created_at DESC
-                LIMIT $1 OFFSET $2
-                """,
-                limit,
-                offset,
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("customers")
+            .select("*")
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return res.data or []
 
     @classmethod
     async def delete_customer(cls, customer_id: str) -> bool:
-        """Delete a customer by customer_id"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("customers").delete().eq("customer_id", customer_id).execute()
+        )
+        return bool(res.data)
 
-        async with cls.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM customers WHERE customer_id = $1",
-                customer_id,
-            )
-            return result == "DELETE 1"
+    # ------------------------------------------------------------------
+    # Accounts
+    # ------------------------------------------------------------------
 
-    # Account methods
     @classmethod
     async def insert_account(cls, account_data: Dict[str, Any]) -> str:
-        """Insert a new account into the database"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            import uuid
-
-            account_id = account_data.get("id") or str(uuid.uuid4())
-            columns = list(account_data.keys())
-            if "id" not in columns:
-                columns.insert(0, "id")
-                account_data["id"] = account_id
-
-            placeholders = [f"${i+1}" for i in range(len(columns))]
-            values = [account_data[col] for col in columns]
-
-            query = f"""
-                INSERT INTO accounts ({', '.join(columns)})
-                VALUES ({', '.join(placeholders)})
-                ON CONFLICT (account_number) DO UPDATE SET
-                    {', '.join([f"{col} = EXCLUDED.{col}" for col in columns if col not in ['id', 'account_number']])},
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING id
-            """
-
-            row = await conn.fetchrow(query, *values)
-            logger.info(f"Account inserted/updated: {row['id']}")
-            return row["id"]
+        c = cls._c()
+        data = _coerce_datetimes(account_data)
+        if not data.get("id"):
+            data["id"] = str(uuid.uuid4())
+        aid = data["id"]
+        await asyncio.to_thread(
+            lambda: c.table("accounts").upsert(data, on_conflict="account_number").execute()
+        )
+        return aid
 
     @classmethod
     async def get_account(cls, account_number: str) -> Optional[Dict[str, Any]]:
-        """Get an account by account_number"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM accounts WHERE account_number = $1",
-                account_number,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("accounts").select("*").eq("account_number", account_number).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_account_by_id(cls, id: str) -> Optional[Dict[str, Any]]:
-        """Get an account by internal id"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM accounts WHERE id = $1",
-                id,
-            )
-            if row:
-                return dict(row)
-            return None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("accounts").select("*").eq("id", id).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def get_accounts_by_customer(cls, customer_id: str) -> List[Dict[str, Any]]:
-        """Get all accounts for a customer"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM accounts WHERE customer_id = $1 ORDER BY created_at DESC",
-                customer_id,
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("accounts")
+            .select("*")
+            .eq("customer_id", customer_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return res.data or []
 
     @classmethod
     async def get_all_accounts(
         cls, limit: int = 1000, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get all accounts with pagination"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM accounts
-                ORDER BY created_at DESC
-                LIMIT $1 OFFSET $2
-                """,
-                limit,
-                offset,
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("accounts")
+            .select("*")
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return res.data or []
 
     @classmethod
     async def delete_account(cls, account_number: str) -> bool:
-        """Delete an account by account_number"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("accounts").delete().eq("account_number", account_number).execute()
+        )
+        return bool(res.data)
 
-        async with cls.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM accounts WHERE account_number = $1",
-                account_number,
-            )
-            return result == "DELETE 1"
+    # ------------------------------------------------------------------
+    # Prompts
+    # ------------------------------------------------------------------
 
-    # Prompt methods
     @classmethod
     async def get_all_prompts(cls) -> List[Dict[str, Any]]:
-        """Get all editable agent prompts"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-        async with cls.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT name, description, content FROM prompts ORDER BY name"
-            )
-            return [dict(row) for row in rows]
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("prompts").select("name, description, content").order("name").execute()
+        )
+        return res.data or []
 
     @classmethod
     async def get_prompt(cls, name: str) -> Optional[Dict[str, Any]]:
-        """Get a single prompt by name"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT name, description, content FROM prompts WHERE name = $1",
-                name,
-            )
-            return dict(row) if row else None
+        c = cls._c()
+        res = await asyncio.to_thread(
+            lambda: c.table("prompts").select("name, description, content").eq("name", name).execute()
+        )
+        return res.data[0] if res.data else None
 
     @classmethod
     async def upsert_prompt(cls, name: str, content: str, description: str = "") -> Dict[str, Any]:
-        """Insert or update a prompt"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-        async with cls.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO prompts (name, description, content)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (name) DO UPDATE SET
-                    content = EXCLUDED.content,
-                    updated_at = CURRENT_TIMESTAMP
-                RETURNING name, description, content
-                """,
-                name,
-                description,
-                content,
-            )
-            return dict(row)
+        c = cls._c()
+        data = {"name": name, "description": description, "content": content}
+        res = await asyncio.to_thread(
+            lambda: c.table("prompts").upsert(data, on_conflict="name").execute()
+        )
+        return res.data[0] if res.data else data
 
     @classmethod
     async def seed_default_prompts(cls) -> None:
-        """Seed default prompts if they do not already exist"""
-        if cls.pool is None:
-            raise RuntimeError("Database pool not initialized")
-
+        c = cls._c()
         defaults = [
             (
                 "aml_system",
@@ -997,16 +563,26 @@ Ensure the code is syntactically correct and uses Transaction attributes properl
             ),
         ]
 
-        async with cls.pool.acquire() as conn:
-            for name, description, content in defaults:
-                await conn.execute(
-                    """
-                    INSERT INTO prompts (name, description, content)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (name) DO NOTHING
-                    """,
-                    name,
-                    description,
-                    content,
-                )
+        for name, description, content in defaults:
+            await asyncio.to_thread(
+                lambda n=name, d=description, ct=content: c.table("prompts").upsert(
+                    {"name": n, "description": d, "content": ct},
+                    ignore_duplicates=True,
+                ).execute()
+            )
         logger.info("Default prompts seeded")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _coerce_datetimes(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert datetime objects to ISO strings for PostgREST compatibility."""
+    out = {}
+    for k, v in data.items():
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
