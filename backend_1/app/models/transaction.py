@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, field_validator
+from typing import Any, List, Optional, Union
 from datetime import datetime
 
 
@@ -7,8 +7,8 @@ class Transaction(BaseModel):
     transaction_id: str
     booking_jurisdiction: str
     regulator: Optional[str] = None
-    booking_datetime: Optional[datetime] = None
-    value_date: Optional[datetime] = None
+    booking_datetime: Optional[Union[datetime, str]] = None
+    value_date: Optional[Union[datetime, str]] = None
     amount: float
     currency: str
     channel: Optional[str] = None
@@ -38,8 +38,8 @@ class Transaction(BaseModel):
     customer_type: Optional[str] = None
     customer_risk_rating: Optional[str] = None
     customer_is_pep: Optional[bool] = None
-    kyc_last_completed: Optional[datetime] = None
-    kyc_due_date: Optional[datetime] = None
+    kyc_last_completed: Optional[Union[datetime, str]] = None
+    kyc_due_date: Optional[Union[datetime, str]] = None
     edd_required: Optional[bool] = None
     edd_performed: Optional[bool] = None
     sow_documented: Optional[bool] = None
@@ -56,9 +56,22 @@ class Transaction(BaseModel):
     daily_cash_total_customer: Optional[float] = None
     daily_cash_txn_count: Optional[int] = None
     sanctions_screening: Optional[str] = None
-    suspicion_determined_datetime: Optional[datetime] = None
-    str_filed_datetime: Optional[datetime] = None
-    timestamp: datetime
+    suspicion_determined_datetime: Optional[Union[datetime, str]] = None
+    str_filed_datetime: Optional[Union[datetime, str]] = None
+    timestamp: Optional[Union[datetime, str]] = None
+    created_at: Optional[Union[datetime, str]] = None
     status: str = "pending"
     risk_score: Optional[float] = None
-    flags: List[str] = []
+    flags: Optional[List[str]] = []
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("amount", "daily_cash_total_customer", mode="before")
+    @classmethod
+    def coerce_float(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
