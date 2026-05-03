@@ -56,15 +56,101 @@ AML-Veersa implements two interconnected agentic AI solutions:
 
 ## Architecture
 
-The project uses a **microservices architecture** orchestrated with Docker Compose:
+The project uses a **microservices architecture** orchestrated with Docker Compose.
+
+### System Architecture Diagram
+
+```mermaid
+flowchart TD
+    User(["👤 User Browser"])
+
+    subgraph Frontend["Frontend — Next.js Port 3000"]
+        UI["Role-Based Dashboards\nLegal · Compliance · Front Office"]
+        Chat["AI Agent Chat UI"]
+        Orch["/api/orchestrate\nIntent Classifier"]
+    end
+
+    subgraph B1["Backend 1 — FastAPI Port 5001 — AML Monitoring"]
+        B1Routes["REST API Routes\n/api/data · /api/rules · /api/customers · /api/agent"]
+        subgraph AMLLoop["AML ReAct Agent LangGraph"]
+            AN["agent_node\nGroq LLM"]
+            SC1{"should_continue?"}
+            TN1["tool_node\n10 AML Tools"]
+            AN --> SC1
+            SC1 -->|"tool_calls"| TN1
+            TN1 --> AN
+            SC1 -->|"text answer"| Done1(["END"])
+        end
+        subgraph RuleFlow["Rule Parser Pipeline LangGraph"]
+            RP1["Node 1 parse_rule\nPlain English to Python"]
+            RP2["Node 2 test_rule\n10 tests + exec()"]
+            RP3["Node 3 refine_rule\nFix failing code"]
+            RP1 --> RP2
+            RP2 -->|"all passed"| SaveRule(["Save to DB"])
+            RP2 -->|"failed"| RP3
+            RP3 --> RP2
+        end
+    end
+
+    subgraph B2["Backend 2 — FastAPI Port 5002 — Document Corroboration"]
+        B2Routes["REST API Routes\n/api/documents · /api/images · /api/agent"]
+        subgraph DocLoop["Doc ReAct Agent LangGraph"]
+            AN2["agent_node\nGroq LLM"]
+            SC2{"should_continue?"}
+            TN2["tool_node\n10 Doc Tools"]
+            AN2 --> SC2
+            SC2 -->|"tool_calls"| TN2
+            TN2 --> AN2
+            SC2 -->|"text answer"| Done2(["END"])
+        end
+        subgraph CVServices["Computer Vision Services"]
+            ELA["ELA Tampering Detection"]
+            CM["Copy-Move Detection"]
+            EXIF["EXIF Metadata"]
+            AIDet["AI Generation Detection"]
+            RevSearch["Reverse Image Search"]
+        end
+    end
+
+    subgraph DBs["Databases"]
+        PG[("PostgreSQL via Supabase\ntransactions · rules · alerts")]
+        Neo4j[("Neo4j Graph DB\ncustomer networks")]
+        Mongo[("MongoDB\ndoc and image results")]
+        Disk[("Local Filesystem\nuploaded files")]
+    end
+
+    LLM(["Groq Cloud\nllama-3.3-70b"])
+
+    User --> Frontend
+    UI --> Orch
+    Chat --> Orch
+    Orch -->|"AML keywords"| B1Routes
+    Orch -->|"doc keywords"| B2Routes
+    B1Routes --> AMLLoop
+    B1Routes --> RuleFlow
+    B2Routes --> DocLoop
+    B2Routes --> CVServices
+    B1 --> PG
+    B1 --> Neo4j
+    B2 --> Mongo
+    B2 --> Disk
+    AN -->|"LLM call"| LLM
+    AN2 -->|"LLM call"| LLM
+    RP1 -->|"LLM call"| LLM
+    RP2 -->|"LLM call"| LLM
+    RP3 -->|"LLM call"| LLM
+```
+
+### Service Overview
 
 | Service | Technology | Port | Description |
 |---------|-----------|------|-------------|
 | **Frontend** | Next.js 15, TypeScript, TailwindCSS | `3000` | Role-based UI with sidebar navigation |
 | **Backend 1** | Python FastAPI | `5001` | Core AML monitoring, transactions, rules engine, customer graph |
 | **Backend 2** | Python FastAPI | `5002` | Document processing, image analysis, forensic analysis |
-| **PostgreSQL** | PostgreSQL 14 | `5432` | Persistent storage for rules, transactions, alerts |
+| **PostgreSQL** | PostgreSQL 14 via Supabase | `5432` | Persistent storage for rules, transactions, alerts, prompts |
 | **Neo4j** | Neo4j 5.13 Community | `7474` / `7687` | Customer relationship graph database |
+| **MongoDB** | MongoDB with Motor async | `27017` | Document and image analysis results |
 | **Nginx** | Nginx | `80` | Reverse proxy routing requests to services |
 
 ### Request Routing (via Nginx)
