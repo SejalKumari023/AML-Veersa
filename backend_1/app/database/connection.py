@@ -268,7 +268,7 @@ class PostgresDatabase:
         res = await asyncio.to_thread(
             lambda: c.table("transactions")
             .select("*")
-            .order("timestamp", desc=True)
+            .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
         )
@@ -315,7 +315,7 @@ class PostgresDatabase:
         res = await asyncio.to_thread(
             lambda: c.table("alerts")
             .select("*")
-            .order("timestamp", desc=True)
+            .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
         )

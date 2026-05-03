@@ -70,7 +70,7 @@ class PgCollection:
         res = await asyncio.to_thread(
             lambda: c.table(self.table_name)
             .select("*")
-            .order("updated_at", desc=True)
+            .order("created_at", desc=True)
             .execute()
         )
         docs = _decode_rows(res.data or [])
