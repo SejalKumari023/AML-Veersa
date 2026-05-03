@@ -189,12 +189,6 @@ class Database:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
 
         cls._client = create_client(url, key)
-
-        # Smoke-test
-        await asyncio.to_thread(
-            lambda: cls._client.table("document_analysis").select("id").limit(1).execute()
-        )
-
         cls.database = PgDatabase()
         logger.info("Backend 2 Supabase storage initialized")
 

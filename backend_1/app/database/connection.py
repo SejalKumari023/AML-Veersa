@@ -133,10 +133,6 @@ class PostgresDatabase:
         if not url or not key:
             raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables are required")
         cls._client = create_client(url, key)
-        # Smoke-test the connection
-        await asyncio.to_thread(
-            lambda: cls._client.table("rules").select("id").limit(1).execute()
-        )
         logger.info("Supabase client initialized successfully")
 
     @classmethod
