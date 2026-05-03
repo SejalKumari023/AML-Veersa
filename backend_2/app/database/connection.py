@@ -230,7 +230,9 @@ class Database:
     @classmethod
     def get_database(cls):
         if cls.database is None:
-            cls.initialize()
+            raise RuntimeError(
+                "Database not initialized — ensure SUPABASE_URL and SUPABASE_KEY env vars are set in Render."
+            )
         return cls.database
 
 
